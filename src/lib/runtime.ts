@@ -1,23 +1,46 @@
 import type { RuntimeRequestMessage } from "../types/runtime";
 
-export function sendRuntimeMessage<TResponse>(message: RuntimeRequestMessage) {
-  return new Promise<TResponse>((resolve, reject) => {
-    if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-      reject(new Error("当前环境不支持 chrome.runtime.sendMessage。"));
-      return;
-    }
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
-    chrome.runtime.sendMessage(message, (response: TResponse) => {
-      const runtimeError = chrome.runtime.lastError;
+export async function sendRuntimeMessage<TResponse>(message: RuntimeRequestMessage) {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    throw new Error("当前环境不支持 chrome.runtime.sendMessage。");
+  }
 
-      if (runtimeError) {
-        reject(new Error(runtimeError.message));
-        return;
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await new Promise<TResponse>((resolve, reject) => {
+        chrome.runtime.sendMessage(message, (response: TResponse) => {
+          const runtimeError = chrome.runtime.lastError;
+
+          if (runtimeError) {
+            reject(new Error(runtimeError.message));
+            return;
+          }
+
+          resolve(response);
+        });
+      });
+
+      return result;
+    } catch (error) {
+      const isConnectionError =
+        error instanceof Error && error.message.includes("Receiving end does not exist");
+
+      if (isConnectionError && attempt < maxAttempts) {
+        await delay(1000 * attempt);
+        continue;
       }
 
-      resolve(response);
-    });
-  });
+      throw error;
+    }
+  }
+
+  throw new Error("连接后台服务失败，请刷新页面后重试。");
 }
 
 export function sendRuntimeMessageLong<TResponse>(
