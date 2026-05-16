@@ -1,69 +1,158 @@
-# 角色
-你是一位拥有10年经验的资深前端架构师和全栈工程师，精通 Chrome/Edge 浏览器插件开发（Manifest V3），精通 React 18、TypeScript、Tailwind CSS 以及各类大模型 API 接入。
+<p align="center">
+  <img src="icons/icon128.png" width="96" alt="Prompt Butler" />
+</p>
 
-# 任务目标
-开发一款名为“提示词生成管家”的高级浏览器插件。UI 风格要求：暗黑模式（Dark Mode）、毛玻璃特效（Glassmorphism）、圆角、极简高级感，整体配色以深灰/黑色背景搭配荧光绿/渐变色强调色为主。所有功能图标使用 `lucide-react`。
+<h1 align="center">提示词生成管家 · Prompt Butler</h1>
 
-# 技术栈
-- 框架：React 18 + Vite + TypeScript
-- 样式：Tailwind CSS + framer-motion (用于平滑动画)
-- 拖拽：react-rnd (用于实现主界面在网页中的随意拖拽)
-- 存储：chrome.storage.local
-- 构建：@crxjs/vite-plugin (处理 Manifest V3)
+<p align="center">
+  一款用于生成、管理与复用高质量 AI 绘画提示词的高级浏览器插件。
+  <br/>
+  A Chrome extension for generating, organizing, and reusing high-quality AI art prompts.
+</p>
 
-# 核心模块与功能需求
+<p align="center">
+  <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white&style=flat-square" alt="React" />
+  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white&style=flat-square" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white&style=flat-square" alt="Vite" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white&style=flat-square" alt="Tailwind CSS" />
+  <img src="https://img.shields.io/badge/Chrome_Extension-MV3-4285F4?logo=googlechrome&logoColor=white&style=flat-square" alt="Chrome Extension" />
+  <img src="https://img.shields.io/badge/Framer_Motion-11-0055FF?logo=framer&logoColor=white&style=flat-square" alt="Framer Motion" />
+  <img src="https://img.shields.io/badge/Lucide_Icons-latest-F56565?logo=lucide&logoColor=white&style=flat-square" alt="Lucide" />
+  <img src="https://img.shields.io/badge/CRXJS-latest-FF6B35?logo=vite&logoColor=white&style=flat-square" alt="CRXJS" />
+</p>
 
-## 1. 插件基础架构
-- 需要包含 `Background Service Worker`（处理所有 LLM 和 生图 API 的网络请求，解决跨域问题）。
-- 需要包含 `Options Page`（独立网页：CYGG模型配置中心）。
-- 需要包含 `Content Script`（将 React App 注入到网页中作为全局悬浮窗，支持拖拽，顶部有 Logo 位置和设置按钮）。
+---
 
-## 2. 配置中心模块 (Options Page: "CYGG模型配置中心")
-- **状态联动**：配置未完成时，主界面显示“配置未就绪”；配置完整并测试连通后，主界面右上角点亮绿色“服务已就绪”。
-- **表单选项**：
-  - **服务商选择**：下拉列表，包含 Claude, Gemini, ChatGPT, 火山引擎(含coling plan), Kimi, Deepseek, Minimax, 阿里云百炼, 小米, 腾讯云。
-  - **API Key 输入框**：密码框格式。
-  - **Base URL**：选择服务商后自动填入对应的官方默认地址，但也支持用户手动修改。
-  - **模型配置**（支持手填 ID 或下拉选择预设）：推理大模型、视觉模型、生图模型。
-  - **生成参数**：分辨率（2K/4K下拉）、生成数量（1/2/3/4张下拉）。
-- **保存配置**：点击保存后写入 `chrome.storage.local`。
+## 📖 简介 | Introduction
 
-## 3. 悬浮主界面 (Content Script UI)
-界面支持全局拖动。分为以下从上到下的几个板块：
-- **Header**：左侧 Logo，右侧设置图标（点击跳转 Options 页）和“服务已就绪”状态灯。
-- **搜索板块**：输入框默认文字“搜索nano,运镜,打斗,光影...等关键字搜索提示词”，尾部带放大镜 Icon，用于在本地存储中搜索提示词。
-- **分类导航栏 (横向滚动 Tab)**：
-  - 默认分类：角色设定、收藏、Nano精修、AI视频运镜、3D建模、电商详情页。
-  - 末尾带有 `+` 按钮，点击可新建文件夹并重命名，保存后存入本地。
+**提示词生成管家** 是一个 Chrome 浏览器插件，能够将一句简单的需求自动扩写为专业级 AI 绘画提示词，输出中文段落、英文 Prompt 和结构化 JSON 三种格式。支持收藏夹管理、AI 一键优化、图像生成等功能。
 
-## 4. 核心功能区：角色设定 (AI Prompt 扩写)
-当选定“角色设定” Tab 时：
-- **角色预设区**：一个支持展开/收起的 Textarea，用户输入 JSON 或大白话的角色设定。
-  - 带有“保存角色”按钮（点击后框变灰，不可编辑）。
-  - 带有“修改”按钮（点击恢复编辑状态）。
-- **用户需求区**：一个输入框，用户输入简短的一句话需求（支持附加一张参考图）。
-- **生成逻辑**：点击生成后，调用 Background script。如果有图调用视觉模型，没图调用推理模型。大模型结合“角色预设”和“用户需求”，生成高质量提示词。
-- **输出结果区**：
-  - 显示三种格式：中文段落、英文段落、高结构化 JSON。
-  - 每个结果均带有：一键复制、重新编辑、一键保存到收藏（带 AI 自动推荐分组标签）功能。
+**Prompt Butler** is a Chrome extension that transforms simple ideas into professional AI art prompts, outputting Chinese descriptions, English prompts, and structured JSON. It also features favorites management, AI optimization, and image generation.
 
-## 5. 收藏夹与其他预设文件夹板块
-- 以列表卡片形式展示保存的提示词。
-- 每张卡片包含内容预览。展开后有：一键复制、编辑修改、**AI一键优化** 功能。
-- 允许在各个分类 Tab 下创建子文件夹来管理提示词。
+---
 
-## 6. 图像生成板块 (底部固定区域或独立Tab)
-- 接收“角色设定”模块生成的提示词，或用户手动输入的提示词。
-- 点击“生成图片”后，调用配置好的生图模型 API。
-- 界面展示加载骨架屏（Skeleton），完成后展示生成的 1~4 张图片。
-- 每张图悬浮显示下载图标（单张下载），且区域顶部有“一键下载所有图片”按钮。
+## ✨ 功能 | Features
 
-# 开发步骤（要求 AI 一步步输出，不要一次性输出所有代码）：
-1. **第一步**：初始化 Vite+React+CRX 项目结构，配置好 TailwindCSS，创建基础的文件目录结构说明。
-2. **第二步**：开发全局状态管理（自定义 hook 封装 `chrome.storage.local`）和 AI 服务商预设常量表（Base URLs & 默认模型表）。
-3. **第三步**：开发独立全屏的 Options 页面（配置中心），实现高逼格暗黑玻璃态 UI 和表单交互逻辑。
-4. **第四步**：开发 Content Script 悬浮窗的壳子（使用 react-rnd），以及 Header 和 导航栏模块。
-5. **第五步**：开发核心的“角色设定”与 LLM 交互逻辑，确保返回三种格式的解析。
-6. **第六步**：开发收藏夹系统和生图渲染模块。
+- **角色设定扩写** — 输入角色预设 + 用户需求，调用大模型生成三种格式的专业提示词
+- **收藏夹管理** — 文件夹分类、搜索、导入/导出备份、AI 一键优化已有提示词
+- **图像生成** — 提示词直出图片，支持单张/批量下载
+- **自定义标签** — 自由创建分类，独立管理各自收藏体系
+- **配置中心** — 支持 Claude / Gemini / ChatGPT / Deepseek 等十余种服务商
+- **暗黑毛玻璃 UI** — 全局悬浮窗，可拖拽，高颜值玻璃态暗黑界面
 
-请先回答“我已理解需求，将严格按照暗黑毛玻璃风格进行开发”，然后直接开始**第一步**的代码输出与操作指导。
+---
+
+- **Prompt Expansion** — Input role preset + brief requirement, get 3 formatted professional prompts
+- **Favorites System** — Folders, full-text search, import/export backups, AI one-click optimization
+- **Image Generation** — Generate images directly from prompts, single/batch download
+- **Custom Tabs** — Create custom categories with independent folder systems
+- **Provider Hub** — 10+ AI providers supported (Claude, Gemini, ChatGPT, Deepseek, etc.)
+- **Dark Glassmorphism UI** — Draggable floating overlay with sleek glassmorphism design
+
+---
+
+## 🛠️ 技术栈 | Tech Stack
+
+| 类别 | 技术 |
+|---|---|
+| 框架 | React 18, TypeScript 5 |
+| 构建 | Vite 5, @crxjs/vite-plugin |
+| 样式 | Tailwind CSS 3, Framer Motion 11 |
+| 图标 | Lucide React |
+| 拖拽 | react-rnd |
+| 存储 | chrome.storage.local |
+| 架构 | Chrome Extension Manifest V3（Service Worker + Content Script + Options Page） |
+
+---
+
+## 🚀 安装 | Installation
+
+### 开发者模式加载
+
+1. 克隆仓库：
+   ```bash
+   git clone https://github.com/你的用户名/项目名.git
+   cd 项目名
+   ```
+
+2. 安装依赖并构建：
+   ```bash
+   npm install
+   npm run build
+   ```
+
+3. 打开 Chrome，进入 `chrome://extensions/`
+4. 开启右上角 **开发者模式**
+5. 点击 **加载已解压的扩展程序**，选择项目的 `dist` 目录
+
+### 从 ZIP 安装
+
+1. 下载并解压项目 ZIP 包
+2. 在项目目录运行 `npm install && npm run build`
+3. 按上述步骤 3-5 加载 `dist` 目录
+
+---
+
+## 📋 使用步骤 | Quick Start
+
+### 1. 配置 API
+
+打开插件 → 点击齿轮图标进入配置中心 → 选择服务商 → 填写 API Key → 测试连接 → 保存。
+
+### 2. 生成提示词
+
+切换到「角色设定」标签 → 输入角色预设 → 输入需求 → 点击生成。
+
+### 3. 管理收藏
+
+生成的提示词一键保存到收藏夹 → 在「收藏」标签中按文件夹整理、搜索、编辑或 AI 优化。
+
+### 4. 导入/导出
+
+在「收藏」标签页，使用右上角的下载/上传按钮导出或恢复全部数据。
+
+更多细节见 [`docs/使用指南.md`](docs/使用指南.md)
+
+---
+
+## 📁 项目结构 | Project Structure
+
+```
+├── src/
+│   ├── background/       # Service Worker（API 请求代理）
+│   ├── content/          # Content Script（悬浮窗 UI）
+│   ├── options/          # 配置中心页面
+│   ├── popup/            # 弹窗页面
+│   ├── hooks/            # 自定义 React Hooks
+│   ├── lib/              # 工具函数（存储、提示词库、备份等）
+│   └── types/            # TypeScript 类型定义
+├── icons/                # 扩展图标
+├── dist/                 # 构建输出
+├── manifest.config.ts    # Manifest V3 配置
+├── vite.config.ts        # Vite 构建配置
+├── tailwind.config.ts    # Tailwind 配置
+└── docs/                 # 文档
+```
+
+---
+
+## 🔧 开发 | Development
+
+```bash
+# 开发模式（热更新）
+npm run dev
+
+# 类型检查
+npm run typecheck
+
+# 生产构建
+npm run build
+```
+
+构建后在 `chrome://extensions/` 中点击扩展的刷新按钮即可更新。
+
+---
+
+## 📄 License
+
+MIT
