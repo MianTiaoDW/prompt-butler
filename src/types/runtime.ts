@@ -91,13 +91,18 @@ export interface DetectProviderModelsMessage {
   };
 }
 
+export interface OpenOptionsPageMessage {
+  type: "open-options-page";
+}
+
 export type RuntimeRequestMessage =
   | TestProviderConnectionMessage
   | DetectProviderModelsMessage
   | GeneratePromptMessage
   | OptimizePromptMessage
   | GenerateImagesMessage
-  | DownloadImagesMessage;
+  | DownloadImagesMessage
+  | OpenOptionsPageMessage;
 
 export type RuntimeResponseMessage =
   | ConnectionTestResult

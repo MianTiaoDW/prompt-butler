@@ -105,7 +105,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   };
 
   const openOptions = () => {
-    chrome.runtime.openOptionsPage(() => {
+    chrome.runtime.sendMessage({ type: "open-options-page" }, () => {
       if (chrome.runtime.lastError) {
         window.open(chrome.runtime.getURL("options.html"));
       }

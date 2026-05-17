@@ -100,6 +100,12 @@ chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, s
         return;
       }
 
+      if (message.type === "open-options-page") {
+        await chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
+        sendResponse({ ok: true });
+        return;
+      }
+
       sendResponse(null);
     } catch (error) {
       console.error("[Prompt Butler] 消息处理异常：", error);
