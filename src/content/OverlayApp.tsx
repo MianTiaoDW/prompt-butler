@@ -105,7 +105,11 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   };
 
   const openOptions = () => {
-    void chrome.runtime.openOptionsPage();
+    chrome.runtime.openOptionsPage(() => {
+      if (chrome.runtime.lastError) {
+        window.open(chrome.runtime.getURL("options.html"));
+      }
+    });
   };
 
   const startHorizontalDrag = (event: ReactMouseEvent<HTMLElement>) => {
