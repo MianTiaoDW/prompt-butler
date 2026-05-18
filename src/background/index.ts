@@ -1,4 +1,4 @@
-import { downloadImages, generateImagesWithProvider } from "./image-generator";
+import { cancelImageGeneration, downloadImages, generateImagesWithProvider } from "./image-generator";
 import { detectProviderModels } from "./model-discovery";
 import { generatePromptFromProvider } from "./prompt-generator";
 import { optimizePromptWithProvider } from "./prompt-generator";
@@ -91,6 +91,12 @@ chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, s
         );
         await finishImageTask(result);
         sendResponse(result);
+        return;
+      }
+
+      if (message.type === "image:cancel") {
+        cancelImageGeneration();
+        sendResponse({ ok: true });
         return;
       }
 

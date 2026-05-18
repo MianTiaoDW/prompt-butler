@@ -1,6 +1,15 @@
 import type { GeneratedImageAsset, ImageGenerationInput, ImageGenerationResult } from "../types/image";
 import type { ExtensionSettings } from "../types/settings";
 
+let currentGenerationAbort: AbortController | null = null;
+
+export function cancelImageGeneration() {
+  if (currentGenerationAbort) {
+    currentGenerationAbort.abort();
+    currentGenerationAbort = null;
+  }
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -12,17 +21,25 @@ function buildUrl(baseUrl: string, path: string) {
   return `${normalizedBaseUrl}${normalizedPath}`;
 }
 
+// 智创聚合API（GPT-Image）仅支持以下尺寸
+// gpt-image-2: 1024x1024, 1536x1024, 1024x1536
+// gpt-image-2-pro: 额外支持 2048x2048, 2048x1152, 3840x2160, 2160x3840
+const SIZE_LOOKUP: Record<string, { "2K": string; "4K": string }> = {
+  "1:1":  { "2K": "1024x1024",  "4K": "2048x2048" },
+  "4:3":  { "2K": "1536x1024",  "4K": "3840x2160" },
+  "3:4":  { "2K": "1024x1536",  "4K": "2160x3840" },
+  "16:9": { "2K": "1536x1024",  "4K": "3840x2160" },
+  "9:16": { "2K": "1024x1536",  "4K": "2160x3840" },
+  "3:1":  { "2K": "1536x1024",  "4K": "3840x2160" },
+  "1:3":  { "2K": "1024x1536",  "4K": "2160x3840" },
+  "8:1":  { "2K": "1536x1024",  "4K": "3840x2160" },
+  "1:8":  { "2K": "1024x1536",  "4K": "2160x3840" },
+  "21:1": { "2K": "1536x1024",  "4K": "3840x2160" },
+  "1:21": { "2K": "1024x1536",  "4K": "2160x3840" },
+};
+
 function mapSize(aspectRatio: string, resolution: "2K" | "4K"): string {
-  const [w, h] = aspectRatio.split(":").map(Number);
-  if (!w || !h) return resolution === "4K" ? "4096x4096" : "2048x2048";
-
-  const baseSize = resolution === "4K" ? 4096 : 2048;
-  const longSide = Math.max(w, h);
-  const scale = baseSize / longSide;
-  const width = Math.max(512, Math.round(w * scale));
-  const height = Math.max(512, Math.round(h * scale));
-
-  return `${width}x${height}`;
+  return SIZE_LOOKUP[aspectRatio]?.[resolution] ?? (resolution === "4K" ? "2048x2048" : "1024x1024");
 }
 
 function isHtmlBody(text: string) {
@@ -105,12 +122,79 @@ function normalizeImageAssets(
   return assets;
 }
 
-function resolveImageEndpoint(baseUrl: string) {
+function resolveImageEndpoints(baseUrl: string): string[] {
   const trimmed = trimTrailingSlash(baseUrl.trim());
+  const paths: string[] = [];
+
   if (/\/v\d+(beta)?$/.test(trimmed)) {
-    return [`${trimmed}/images/generations`];
+    paths.push(`${trimmed}/images/generations`);
+  } else if (/\/v\d+$/.test(trimmed)) {
+    paths.push(`${trimmed}/images/generations`);
+    paths.push(`${trimmed.replace(/\/v\d+$/, "")}/v1/images/generations`);
+  } else {
+    paths.push(`${trimmed}/v1/images/generations`);
+    paths.push(`${trimmed}/images/generations`);
   }
-  return [`${trimmed}/v1/images/generations`, `${trimmed}/images/generations`];
+
+  return [...new Set(paths)];
+}
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit & { cancelSignal?: AbortSignal },
+  maxRetries = 2
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // 检查外部取消信号
+    if (options.cancelSignal?.aborted) {
+      throw new DOMException("已取消生图请求。", "AbortError");
+    }
+
+    try {
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), 300000);
+
+      // 合并外部取消信号和内部超时信号
+      const onExternalAbort = () => timeoutController.abort();
+      options.cancelSignal?.addEventListener("abort", onExternalAbort, { once: true });
+
+      const mergedOptions: RequestInit = {
+        ...options,
+        signal: timeoutController.signal,
+      };
+
+      try {
+        const response = await fetch(url, mergedOptions);
+        return response;
+      } finally {
+        clearTimeout(timeoutId);
+        options.cancelSignal?.removeEventListener("abort", onExternalAbort);
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isAbort = lastError.message.includes("abort") || lastError.message.includes("AbortError")
+        || (error instanceof DOMException && error.name === "AbortError");
+
+      // 外部取消不重试
+      if (isAbort) throw lastError;
+
+      const isNetworkError =
+        lastError.message.includes("Failed to fetch") ||
+        lastError.message.includes("NetworkError") ||
+        (lastError.name === "TypeError");
+
+      if (isNetworkError && attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 4000);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw lastError;
+    }
+  }
+
+  throw lastError ?? new Error("请求失败");
 }
 
 async function requestSingleImage(
@@ -118,11 +202,13 @@ async function requestSingleImage(
   input: ImageGenerationInput,
   endpoint: string
 ): Promise<GeneratedImageAsset[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => { controller.abort(); }, 120000);
+  // 每次请求创建新的 AbortController（如果还没有外部取消的）
+  if (!currentGenerationAbort || currentGenerationAbort.signal.aborted) {
+    currentGenerationAbort = new AbortController();
+  }
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetchWithRetry(endpoint, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${settings.apiKey}`,
@@ -132,9 +218,10 @@ async function requestSingleImage(
         model: settings.imageModel,
         prompt: input.prompt,
         n: 1,
-        size: mapSize(input.aspectRatio, input.resolution)
+        size: mapSize(input.aspectRatio, input.resolution),
+        response_format: "url"
       }),
-      signal: controller.signal
+      cancelSignal: currentGenerationAbort.signal
     });
 
     if (!response.ok) {
@@ -161,24 +248,15 @@ async function requestSingleImage(
 
     return images;
   } catch (error) {
-    const isAbort = (() => {
-      if (error instanceof DOMException && error.name === "AbortError") return true;
-      if (error instanceof Error && (error.name === "AbortError" || /abort/i.test(error.message ?? ""))) return true;
-      try {
-        const err = error as { name?: unknown; message?: unknown } | null | undefined;
-        if (err?.name === "AbortError") return true;
-        if (typeof err?.message === "string" && /abort/i.test(err.message)) return true;
-      } catch {
-        /* 跨 realm 对象属性访问也可能抛异常 */
-      }
-      return false;
-    })();
+    const message = error instanceof Error ? error.message : "生图失败。";
+    const isAbort =
+      message.includes("abort") ||
+      message.includes("AbortError") ||
+      (error instanceof DOMException && error.name === "AbortError");
     if (isAbort) {
-      throw new Error("生图请求超时（120 秒），请检查网络或换一个更轻量的模型重试。");
+      throw new Error("生图请求超时（300 秒），请检查网络或换一个更轻量的模型重试。");
     }
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -186,9 +264,8 @@ async function generateWithOpenAiCompatible(
   settings: ExtensionSettings,
   input: ImageGenerationInput
 ) {
-  const endpoints = resolveImageEndpoint(settings.baseUrl);
+  const endpoints = resolveImageEndpoints(settings.baseUrl);
 
-  // 用第一张请求同时探测可用端点
   let workingEndpoint = "";
   let probeImages: GeneratedImageAsset[] = [];
   let lastError: Error | null = null;
@@ -208,12 +285,10 @@ async function generateWithOpenAiCompatible(
     throw lastError ?? new Error("无法连接到生图接口，请检查 Base URL 和模型配置。");
   }
 
-  // 1 张图直接用探测结果，避免重复请求
   if (input.count <= 1) {
     return { model: settings.imageModel, images: probeImages };
   }
 
-  // 并行请求剩余数量，每张图独立请求确保可靠
   const remaining = input.count - 1;
   const results = await Promise.allSettled(
     Array.from({ length: remaining }, () =>
@@ -272,7 +347,9 @@ export async function generateImagesWithProvider(
   }
 
   try {
+    currentGenerationAbort = new AbortController();
     const { model, images } = await generateWithOpenAiCompatible(settings, input);
+    currentGenerationAbort = null;
 
     if (images.length === 0) {
       return {
@@ -292,6 +369,7 @@ export async function generateImagesWithProvider(
       images
     };
   } catch (error) {
+    currentGenerationAbort = null;
     return {
       ok: false,
       provider: settings.provider,

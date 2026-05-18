@@ -95,6 +95,10 @@ export interface OpenOptionsPageMessage {
   type: "open-options-page";
 }
 
+export interface CancelImageGenerationMessage {
+  type: "image:cancel";
+}
+
 export type RuntimeRequestMessage =
   | TestProviderConnectionMessage
   | DetectProviderModelsMessage
@@ -102,7 +106,8 @@ export type RuntimeRequestMessage =
   | OptimizePromptMessage
   | GenerateImagesMessage
   | DownloadImagesMessage
-  | OpenOptionsPageMessage;
+  | OpenOptionsPageMessage
+  | CancelImageGenerationMessage;
 
 export type RuntimeResponseMessage =
   | ConnectionTestResult
@@ -110,4 +115,5 @@ export type RuntimeResponseMessage =
   | PromptGenerationResult
   | PromptOptimizationResult
   | ImageGenerationResult
-  | number[];
+  | number[]
+  | { ok: true };

@@ -156,6 +156,17 @@ export function ImageStudio(props: {
     }
   };
 
+  const handleCancel = async () => {
+    try {
+      await sendRuntimeMessage({ type: "image:cancel" });
+    } catch {
+      // 取消消息本身失败不影响 UI 重置
+    }
+    setIsGenerating(false);
+    setPanelMessage("已取消生图。");
+    await clearImageTask();
+  };
+
   const handleDownload = async (urls: string[], imageId?: string) => {
     if (imageId) {
       setDownloadingId(imageId);
@@ -279,6 +290,19 @@ export function ImageStudio(props: {
             )}
             {isGenerating ? "生成中..." : "生成图片"}
           </button>
+
+          {isGenerating ? (
+            <button
+              type="button"
+              onClick={() => {
+                void handleCancel();
+              }}
+              className="inline-flex items-center gap-2 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-300 transition hover:bg-rose-400/20"
+            >
+              <X className="h-4 w-4" />
+              取消生图
+            </button>
+          ) : null}
 
           {generationResult?.ok ? (
             <button

@@ -48,31 +48,57 @@ export function sendRuntimeMessageLong<TResponse>(
   pollFn: () => Promise<TResponse | null>
 ): Promise<TResponse> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+
+    // 打开长连接端口，防止 Service Worker 因闲置被杀
+    const keepAlivePort = chrome.runtime.connect({ name: "long-task" });
+    keepAlivePort.onDisconnect.addListener(() => {
+      // Worker 断开时不做失败处理，依赖轮询兜底
+    });
+
+    const cleanup = () => {
+      keepAlivePort.disconnect();
+      clearInterval(poll);
+    };
+    keepAlivePort.onDisconnect.addListener(() => {
+      // Worker 断开时不做失败处理，依赖轮询兜底
+    });
+
     // 先尝试 sendMessage（Worker 活跃时最快）
     chrome.runtime.sendMessage(message, (response: TResponse) => {
       const runtimeError = chrome.runtime.lastError;
-      if (!runtimeError && response) {
+      if (!settled && !runtimeError && response) {
+        settled = true;
+        cleanup();
         resolve(response);
       }
     });
 
     // 同时启动轮询（Worker 被杀后靠这个拿到结果）
     let attempts = 0;
-    const maxAttempts = 60; // 最多轮询 60 次（120 秒）
+    const maxAttempts = 150; // 最多轮询 150 次（300 秒）
     const poll = setInterval(async () => {
+      if (settled) {
+        cleanup();
+        return;
+      }
       attempts++;
       try {
         const result = await pollFn();
-        if (result) {
-          clearInterval(poll);
+        if (result && !settled) {
+          settled = true;
+          cleanup();
           resolve(result);
         }
       } catch {
         // 轮询失败继续重试
       }
       if (attempts >= maxAttempts) {
-        clearInterval(poll);
-        reject(new Error("请求超时，请重试。"));
+        cleanup();
+        if (!settled) {
+          settled = true;
+          reject(new Error("请求超时，请重试。"));
+        }
       }
     }, 2000);
   });

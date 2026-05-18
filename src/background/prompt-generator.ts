@@ -244,7 +244,7 @@ async function requestWithOpenAiCompatible(
     ? ["/chat/completions"]
     : baseUrl.endsWith("/v1beta")
       ? ["/chat/completions"]
-      : ["/v1/chat/completions", "/chat/completions"];
+      : ["/v1/chat/completions"];
 
   let lastError: Error | null = null;
 
