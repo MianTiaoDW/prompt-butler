@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, Reorder } from "framer-motion";
 import { Check, Plus, Search, Settings, Sparkles, X } from "lucide-react";
 import { Rnd } from "react-rnd";
 
@@ -9,10 +9,13 @@ import { ImageStudio } from "./ImageStudio";
 import { RolePromptStudio } from "./RolePromptStudio";
 import {
   addCustomTab,
+  CORE_TABS,
   DEFAULT_PROMPT_TABS,
-  deleteCustomTab,
+  deleteTab,
   getCustomTabs,
-  renameCustomTab
+  getVisibleTabs,
+  renameCustomTab,
+  saveTabOrder
 } from "../lib/prompt-library";
 import { useExtensionSettings } from "../hooks/useExtensionSettings";
 import { subscribeToast } from "../lib/toast";
@@ -26,6 +29,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   const [activeTab, setActiveTab] = useState<string>(DEFAULT_PROMPT_TABS[0]);
   const [searchQuery, setSearchQuery] = useState("");
   const [customTabs, setCustomTabs] = useState<string[]>([]);
+  const [visibleTabs, setVisibleTabs] = useState<string[]>(DEFAULT_PROMPT_TABS.slice());
   const [isCreatingTab, setIsCreatingTab] = useState(false);
   const [tabNameDraft, setTabNameDraft] = useState("");
   const [editingTabName, setEditingTabName] = useState<string | null>(null);
@@ -42,9 +46,11 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
     startX: 0,
     startScrollLeft: 0
   });
+  const isReorderingRef = useRef(false);
 
   useEffect(() => {
     void getCustomTabs().then(setCustomTabs);
+    void getVisibleTabs().then(setVisibleTabs);
   }, []);
 
   useEffect(() => {
@@ -59,11 +65,10 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
     });
   }, []);
 
-  const navTabs = [...DEFAULT_PROMPT_TABS, ...customTabs];
-  const libraryTabs = DEFAULT_PROMPT_TABS.filter(
+  const libraryTabs = visibleTabs.filter(
     (tab) => tab !== "角色设定" && tab !== "图像生成"
   );
-  const availableCategories: string[] = [...libraryTabs, ...customTabs];
+  const availableCategories: string[] = [...libraryTabs];
 
   const handleCreateTab = async () => {
     try {
@@ -95,8 +100,9 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   };
 
   const handleDeleteTab = async (name: string) => {
-    const next = await deleteCustomTab(name);
-    setCustomTabs(next);
+    const { customTabs: nextCustom, visibleTabs: nextVisible } = await deleteTab(name);
+    setCustomTabs(nextCustom);
+    setVisibleTabs(nextVisible);
     if (activeTab === name) {
       setActiveTab(DEFAULT_PROMPT_TABS[0]);
     }
@@ -113,9 +119,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   };
 
   const startHorizontalDrag = (event: ReactMouseEvent<HTMLElement>) => {
-    if (!navRef.current) {
-      return;
-    }
+    if (isReorderingRef.current || !navRef.current) return;
 
     dragStateRef.current = {
       isDragging: true,
@@ -125,9 +129,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   };
 
   const moveHorizontalDrag = (event: ReactMouseEvent<HTMLElement>) => {
-    if (!navRef.current || !dragStateRef.current.isDragging) {
-      return;
-    }
+    if (isReorderingRef.current || !navRef.current || !dragStateRef.current.isDragging) return;
 
     const distance = event.clientX - dragStateRef.current.startX;
     navRef.current.scrollLeft = dragStateRef.current.startScrollLeft - distance;
@@ -223,20 +225,35 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
 
           <nav
             ref={navRef}
-            className="no-scrollbar mt-4 flex gap-2 overflow-x-auto pb-2"
+            className="no-scrollbar mt-4 overflow-x-auto pb-2"
+            style={{ touchAction: "pan-x", overscrollBehaviorX: "contain" }}
             onMouseDown={startHorizontalDrag}
             onMouseMove={moveHorizontalDrag}
             onMouseUp={endHorizontalDrag}
             onMouseLeave={endHorizontalDrag}
           >
-            {navTabs.map((tab) => {
+          <Reorder.Group
+            axis="x"
+            values={visibleTabs}
+            onReorder={async (newOrder: string[]) => {
+              setVisibleTabs(newOrder);
+              await saveTabOrder(newOrder);
+            }}
+            className="flex gap-2"
+          >
+            {visibleTabs.map((tab) => {
               const isCustom = customTabs.includes(tab);
+              const isDeletable = !CORE_TABS.includes(tab);
               const isEditing = editingTabName === tab;
 
               if (isEditing) {
                 return (
-                  <span
+                  <Reorder.Item
                     key={tab}
+                    value={tab}
+                    as="span"
+                    onDragStart={() => { isReorderingRef.current = true; }}
+                    onDragEnd={() => { isReorderingRef.current = false; }}
                     className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-accent/45 bg-black/25 px-3 py-1.5"
                   >
                     <input
@@ -275,43 +292,62 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
                     >
                       <X className="h-3 w-3" />
                     </button>
-                  </span>
+                  </Reorder.Item>
                 );
               }
 
               return (
-                <button
+                <Reorder.Item
                   key={tab}
-                  type="button"
-                  onClick={() => {
-                    setActiveTab(tab);
+                  value={tab}
+                  as="span"
+                  className="inline-flex items-center gap-1"
+                  whileDrag={{
+                    scale: 1.08,
+                    zIndex: 50,
+                    boxShadow: "0 0 20px rgba(0,255,132,0.25)"
                   }}
-                  onDoubleClick={
-                    isCustom
-                      ? () => {
-                          setEditingTabName(tab);
-                          setTabNameDraft(tab);
-                        }
-                      : undefined
-                  }
-                  onContextMenu={
-                    isCustom
-                      ? (event) => {
-                          event.preventDefault();
-                          void handleDeleteTab(tab);
-                        }
-                      : undefined
-                  }
-                  title={isCustom ? "双击重命名，右键删除" : undefined}
-                  className={[
-                    "whitespace-nowrap rounded-full border px-4 py-2 text-sm transition",
-                    activeTab === tab
-                      ? "border-accent/45 bg-accent/14 text-accent"
-                      : "border-white/10 bg-white/5 text-white/70 hover:border-white/20 hover:text-white"
-                  ].join(" ")}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  onDragStart={() => { isReorderingRef.current = true; }}
+                  onDragEnd={() => { isReorderingRef.current = false; }}
                 >
-                  {tab}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(tab);
+                    }}
+                    onDoubleClick={
+                      isCustom
+                        ? () => {
+                            setEditingTabName(tab);
+                            setTabNameDraft(tab);
+                          }
+                        : undefined
+                    }
+                    title={isCustom ? "双击重命名" : undefined}
+                    className={[
+                      "whitespace-nowrap rounded-full border px-4 py-2 text-sm transition",
+                      activeTab === tab
+                        ? "border-accent/45 bg-accent/14 text-accent"
+                        : "border-white/10 bg-white/5 text-white/70 hover:border-white/20 hover:text-white"
+                    ].join(" ")}
+                  >
+                    {tab}
+                  </button>
+                  {isDeletable ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteTab(tab);
+                      }}
+                      className="rounded-full p-1 text-white/30 transition hover:bg-rose-400/20 hover:text-rose-300"
+                      title="删除标签"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </Reorder.Item>
               );
             })}
 
@@ -370,6 +406,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
                 <Plus className="h-4 w-4" />
               </button>
             )}
+          </Reorder.Group>
           </nav>
 
           {panelErrorMessage ? (

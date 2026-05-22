@@ -22,10 +22,34 @@ export const DEFAULT_PROMPT_TABS = [
   "电商详情页"
 ] as const;
 
+export const CORE_TABS: readonly string[] = ["角色设定", "图像生成", "收藏"];
+
 export const CUSTOM_TABS_KEY = "prompt-butler-custom-tabs";
+const DELETED_TABS_KEY = "prompt-butler-deleted-tabs";
+const TAB_ORDER_KEY = "prompt-butler-tab-order";
 
 export async function getCustomTabs(): Promise<string[]> {
   return storageGet<string[]>(CUSTOM_TABS_KEY, []);
+}
+
+export async function getVisibleTabs(): Promise<string[]> {
+  const customTabs = await getCustomTabs();
+  const deletedTabs = await storageGet<string[]>(DELETED_TABS_KEY, []);
+  const tabOrder = await storageGet<string[]>(TAB_ORDER_KEY, []);
+  const deletedSet = new Set(deletedTabs);
+
+  const allTabs = [...DEFAULT_PROMPT_TABS, ...customTabs];
+  const visible = allTabs.filter((t) => !deletedSet.has(t));
+
+  if (tabOrder.length === 0) return visible;
+
+  const ordered = tabOrder.filter((t) => visible.includes(t));
+  const newTabs = visible.filter((t) => !ordered.includes(t));
+  return [...ordered, ...newTabs];
+}
+
+export async function saveTabOrder(orderedTabs: string[]) {
+  await storageSet(TAB_ORDER_KEY, orderedTabs);
 }
 
 export async function addCustomTab(name: string) {
@@ -36,12 +60,19 @@ export async function addCustomTab(name: string) {
     throw new Error("预设名称不能为空。");
   }
 
-  if (DEFAULT_PROMPT_TABS.includes(trimmedName as (typeof DEFAULT_PROMPT_TABS)[number]) || tabs.includes(trimmedName)) {
+  const deletedTabs = await storageGet<string[]>(DELETED_TABS_KEY, []);
+  const allExisting = [...DEFAULT_PROMPT_TABS, ...tabs].filter((t) => !deletedTabs.includes(t));
+  if (allExisting.includes(trimmedName)) {
     throw new Error("同名预设已存在。");
   }
 
   const next = [...tabs, trimmedName];
   await storageSet(CUSTOM_TABS_KEY, next);
+
+  // Add to tab order
+  const tabOrder = await storageGet<string[]>(TAB_ORDER_KEY, []);
+  await storageSet(TAB_ORDER_KEY, [...tabOrder, trimmedName]);
+
   return next;
 }
 
@@ -88,11 +119,30 @@ export async function renameCustomTab(oldName: string, newName: string) {
   return next;
 }
 
-export async function deleteCustomTab(name: string) {
-  const tabs = await getCustomTabs();
-  const next = tabs.filter((t) => t !== name);
-  await storageSet(CUSTOM_TABS_KEY, next);
-  return next;
+export async function deleteTab(name: string): Promise<{ customTabs: string[]; visibleTabs: string[] }> {
+  if (CORE_TABS.includes(name)) {
+    throw new Error("核心标签不能删除。");
+  }
+
+  // Remove from custom tabs if applicable
+  let customTabs = await getCustomTabs();
+  if (customTabs.includes(name)) {
+    customTabs = customTabs.filter((t) => t !== name);
+    await storageSet(CUSTOM_TABS_KEY, customTabs);
+  }
+
+  // Add to deleted set
+  const deletedTabs = await storageGet<string[]>(DELETED_TABS_KEY, []);
+  if (!deletedTabs.includes(name)) {
+    await storageSet(DELETED_TABS_KEY, [...deletedTabs, name]);
+  }
+
+  // Remove from tab order
+  const tabOrder = await storageGet<string[]>(TAB_ORDER_KEY, []);
+  await storageSet(TAB_ORDER_KEY, tabOrder.filter((t) => t !== name));
+
+  const visibleTabs = await getVisibleTabs();
+  return { customTabs, visibleTabs };
 }
 
 const tagRules = [
@@ -135,7 +185,8 @@ export async function savePromptToFavorites(input: {
     format: input.format,
     content: input.content,
     category: "收藏",
-    tags: recommendPromptTags(input.content)
+    tags: recommendPromptTags(input.content),
+    order: 0
   };
 
   await storageSet(PROMPT_STORAGE_KEYS.favorites, [record, ...existing]);
@@ -305,4 +356,87 @@ export function searchPromptRecords(records: SavedPromptRecord[], searchQuery: s
 
     return haystacks.some((value) => value.toLowerCase().includes(normalizedQuery));
   });
+}
+
+// --- 种子数据导入 ---
+
+export async function importSeedPrompts(seeds: SavedPromptRecord[]): Promise<number> {
+  const existing = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const existingIds = new Set(existing.map((r) => r.id));
+  const newRecords = seeds.filter((r) => !existingIds.has(r.id));
+
+  if (newRecords.length === 0) return 0;
+
+  await storageSet(PROMPT_STORAGE_KEYS.favorites, [...newRecords, ...existing]);
+  return newRecords.length;
+}
+
+export async function ensureSeedCategories(categories: string[]) {
+  const tabs = await getCustomTabs();
+  const deletedTabs = await storageGet<string[]>(DELETED_TABS_KEY, []);
+  let changed = false;
+
+  for (const cat of categories) {
+    const isDefault = DEFAULT_PROMPT_TABS.includes(cat as (typeof DEFAULT_PROMPT_TABS)[number]);
+    const isCustom = tabs.includes(cat);
+    const isDeleted = deletedTabs.includes(cat);
+    if (!isDefault && !isCustom && !isDeleted) {
+      tabs.push(cat);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await storageSet(CUSTOM_TABS_KEY, tabs);
+  }
+}
+
+// --- 提示词排序 ---
+
+async function reorderFavorites(scope: string, orderedIds: string[]) {
+  const existing = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const orderMap = new Map(orderedIds.map((id, index) => [id, index]));
+  const nextRecords = existing.map((record) => {
+    if (record.category !== scope || !orderMap.has(record.id)) return record;
+    return { ...record, order: orderMap.get(record.id) ?? record.order };
+  });
+  await storageSet(PROMPT_STORAGE_KEYS.favorites, nextRecords);
+  return nextRecords;
+}
+
+export async function moveFavoriteUp(recordId: string, scope: string) {
+  const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const scopeRecords = records
+    .filter((r) => r.category === scope)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = scopeRecords.findIndex((r) => r.id === recordId);
+  if (idx <= 0) return records;
+  const orderedIds = scopeRecords.map((r) => r.id);
+  [orderedIds[idx - 1], orderedIds[idx]] = [orderedIds[idx], orderedIds[idx - 1]];
+  return reorderFavorites(scope, orderedIds);
+}
+
+export async function moveFavoriteDown(recordId: string, scope: string) {
+  const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const scopeRecords = records
+    .filter((r) => r.category === scope)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = scopeRecords.findIndex((r) => r.id === recordId);
+  if (idx < 0 || idx >= scopeRecords.length - 1) return records;
+  const orderedIds = scopeRecords.map((r) => r.id);
+  [orderedIds[idx], orderedIds[idx + 1]] = [orderedIds[idx + 1], orderedIds[idx]];
+  return reorderFavorites(scope, orderedIds);
+}
+
+export async function pinFavoriteToTop(recordId: string, scope: string) {
+  const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const scopeRecords = records
+    .filter((r) => r.category === scope)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = scopeRecords.findIndex((r) => r.id === recordId);
+  if (idx <= 0) return records;
+  const orderedIds = scopeRecords.map((r) => r.id);
+  const [moved] = orderedIds.splice(idx, 1);
+  orderedIds.unshift(moved);
+  return reorderFavorites(scope, orderedIds);
 }

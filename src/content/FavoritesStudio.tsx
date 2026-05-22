@@ -1,30 +1,40 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ArrowUp,
+  ArrowDown,
   Check,
   Copy,
+  Database,
   Download,
   Upload,
   LoaderCircle,
   PencilLine,
+  Pin,
   Plus,
-  Save,
   Sparkles,
   Trash2,
   X
 } from "lucide-react";
 
 import { useChromeStorage } from "../hooks/useChromeStorage";
+import { storageGet } from "../lib/storage";
 import {
   createPromptFolder,
   deletePromptFolder,
+  moveFavoriteUp,
+  moveFavoriteDown,
+  pinFavoriteToTop,
   PROMPT_STORAGE_KEYS,
   recommendPromptTags,
   renamePromptFolder,
   reorderPromptFolders,
   searchPromptRecords,
-  updateFavoritePrompt
+  updateFavoritePrompt,
+  importSeedPrompts,
+  ensureSeedCategories
 } from "../lib/prompt-library";
+import { SEED_PROMPTS } from "../lib/seed-prompts";
 import { sendRuntimeMessage } from "../lib/runtime";
 import { exportPromptsAsJson } from "../lib/backup";
 import { showToast } from "../lib/toast";
@@ -58,8 +68,9 @@ export function FavoritesStudio(props: {
   );
   const foldersStorage = useChromeStorage<PromptFolder[]>(PROMPT_STORAGE_KEYS.folders, []);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [draftContent, setDraftContent] = useState("");
+  const [autoSavedId, setAutoSavedId] = useState<string | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [panelMessage, setPanelMessage] = useState("");
@@ -73,6 +84,33 @@ export function FavoritesStudio(props: {
   const [promptDraft, setPromptDraft] = useState("");
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
+  const [isImportingSeed, setIsImportingSeed] = useState(false);
+
+  const handleImportSeeds = async () => {
+    setIsImportingSeed(true);
+    try {
+      const remapped = SEED_PROMPTS.map((p) =>
+        p.category === "角色设定" ? { ...p, category: "收藏" } : p
+      );
+      const cats = [...new Set(remapped.map((p) => p.category))];
+      await ensureSeedCategories(cats);
+      const count = await importSeedPrompts(remapped);
+      // 无论有无新增，都强制刷新 React 状态和 storage 同步
+      const latest = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+      await setFavorites(latest);
+      if (count > 0) {
+        showToast(`已导入 ${count} 条内置提示词`);
+      } else {
+        showToast(`已加载 ${latest.length} 条提示词（含内置库）`);
+      }
+    } finally {
+      setIsImportingSeed(false);
+    }
+  };
+
+  useEffect(() => {
+    void handleImportSeeds();
+  }, []);
 
   const { value: favorites, setValue: setFavorites, isLoading } = favoritesStorage;
   const { value: folders, setValue: setFolders } = foldersStorage;
@@ -90,6 +128,12 @@ export function FavoritesStudio(props: {
     favorites.filter((record) => record.category === scopedCategoryName),
     searchQuery
   );
+
+  const sortedFavorites = [...filteredFavorites].sort((a, b) => {
+    const orderDiff = (a.order ?? 0) - (b.order ?? 0);
+    if (orderDiff !== 0) return orderDiff;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
 
   useEffect(() => {
     if (!copiedId) {
@@ -116,32 +160,45 @@ export function FavoritesStudio(props: {
     }
   };
 
-  const startEditing = (record: SavedPromptRecord) => {
-    setExpandedId(record.id);
-    setEditingId(record.id);
-    setDraftContent(record.content);
-    setDraftCategory(record.category);
-    setPanelMessage("已进入编辑模式，保存后会覆盖当前提示词内容。");
+  const flushPendingSave = async (recordId: string, content: string) => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    if (!content.trim()) return;
+    const tags = recommendPromptTags(content);
+    const updated = await updateFavoritePrompt(recordId, { content, tags });
+    if (updated) {
+      await setFavorites((current) =>
+        current.map((item) => (item.id === recordId ? updated : item))
+      );
+    }
   };
 
-  const saveEditing = async (record: SavedPromptRecord) => {
-    const tags = recommendPromptTags(draftContent);
-    const updatedRecord = await updateFavoritePrompt(record.id, {
-      content: draftContent,
-      category: draftCategory,
-      tags
-    });
-
-    if (!updatedRecord) {
-      setPanelMessage("保存失败，未找到对应提示词记录。");
-      return;
+  const debouncedSave = (recordId: string, content: string) => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
     }
+    autoSaveTimerRef.current = setTimeout(async () => {
+      const tags = recommendPromptTags(content);
+      const updated = await updateFavoritePrompt(recordId, { content, tags });
+      if (updated) {
+        await setFavorites((current) =>
+          current.map((item) => (item.id === recordId ? updated : item))
+        );
+        setAutoSavedId(recordId);
+        setTimeout(() => setAutoSavedId(null), 2000);
+      }
+      autoSaveTimerRef.current = null;
+    }, 1500);
+  };
 
-    await setFavorites((current) =>
-      current.map((item) => (item.id === record.id ? updatedRecord : item))
-    );
-    setEditingId(null);
-    setPanelMessage("提示词已更新。");
+  const handleSortAction = async (recordId: string, action: "pin" | "up" | "down") => {
+    let updated: SavedPromptRecord[];
+    if (action === "pin") updated = await pinFavoriteToTop(recordId, scopedCategoryName);
+    else if (action === "up") updated = await moveFavoriteUp(recordId, scopedCategoryName);
+    else updated = await moveFavoriteDown(recordId, scopedCategoryName);
+    await setFavorites(updated);
   };
 
   const handleCreateFolder = async () => {
@@ -358,7 +415,7 @@ export function FavoritesStudio(props: {
         current.map((item) => (item.id === record.id ? updatedRecord : item))
       );
       setExpandedId(record.id);
-      setEditingId(null);
+      setDraftContent(updatedRecord.content);
       setPanelMessage(`AI 优化完成，当前使用模型：${result.model}`);
     } catch (error) {
       setPanelMessage(
@@ -391,12 +448,13 @@ export function FavoritesStudio(props: {
         </section>
 
         <section className="space-y-1.5">
-          {filteredFavorites.map((record) => {
+          {sortedFavorites.map((record, index) => {
             const isExpanded = expandedId === record.id;
-            const isEditing = editingId === record.id;
             const isBusy = busyId === record.id;
             const isEditingTitle = editingTitleId === record.id;
             const displayTitle = record.title || record.content.slice(0, 28);
+            const isFirst = index === 0;
+            const isLast = index === sortedFavorites.length - 1;
 
             return (
               <article
@@ -451,6 +509,40 @@ export function FavoritesStudio(props: {
                       <button
                         type="button"
                         onClick={() => {
+                          void handleSortAction(record.id, "pin");
+                        }}
+                        disabled={isFirst}
+                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"
+                        title="置顶"
+                      >
+                        <Pin className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleSortAction(record.id, "up");
+                        }}
+                        disabled={isFirst}
+                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"
+                        title="上移"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleSortAction(record.id, "down");
+                        }}
+                        disabled={isLast}
+                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"
+                        title="下移"
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
                           setEditingTitleId(record.id);
                           setTitleDraft(record.title || "");
                         }}
@@ -475,8 +567,16 @@ export function FavoritesStudio(props: {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setExpandedId((current) => (current === record.id ? null : record.id));
+                    onClick={async () => {
+                      if (isExpanded) {
+                        await flushPendingSave(record.id, draftContent);
+                        setExpandedId(null);
+                        setDraftContent("");
+                      } else {
+                        setExpandedId(record.id);
+                        setDraftContent(record.content);
+                        setDraftCategory(record.category);
+                      }
                     }}
                     className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/55 transition hover:text-white"
                   >
@@ -494,19 +594,22 @@ export function FavoritesStudio(props: {
                       <span>{formatTimestamp(record.updatedAt ?? record.createdAt)}</span>
                     </div>
 
-                    {isEditing ? (
-                      <textarea
-                        value={draftContent}
-                        onChange={(event) => {
-                          setDraftContent(event.target.value);
-                        }}
-                        className="min-h-[150px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition"
-                      />
-                    ) : (
-                      <pre className="whitespace-pre-wrap break-words rounded-3xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-6 text-white/68">
-                        {record.content}
-                      </pre>
-                    )}
+                    <textarea
+                      value={draftContent}
+                      onChange={(event) => {
+                        const newContent = event.target.value;
+                        setDraftContent(newContent);
+                        debouncedSave(record.id, newContent);
+                      }}
+                      className="min-h-[150px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition focus:border-accent/40"
+                    />
+
+                    {autoSavedId === record.id ? (
+                      <div className="inline-flex items-center gap-1 text-[11px] text-accent/70">
+                        <Check className="h-3 w-3" />
+                        已自动保存
+                      </div>
+                    ) : null}
 
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -523,30 +626,6 @@ export function FavoritesStudio(props: {
                         )}
                         {copiedId === record.id ? "已复制" : "一键复制"}
                       </button>
-
-                      {isEditing ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void saveEditing(record);
-                          }}
-                          className="inline-flex items-center gap-1 rounded-xl border border-accent/35 bg-accent/12 px-3 py-2 text-xs text-accent transition hover:bg-accent/18"
-                        >
-                          <Save className="h-3.5 w-3.5" />
-                          保存修改
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            startEditing(record);
-                          }}
-                          className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
-                        >
-                          <PencilLine className="h-3.5 w-3.5" />
-                          编辑修改
-                        </button>
-                      )}
 
                       <button
                         type="button"
@@ -639,26 +718,38 @@ export function FavoritesStudio(props: {
               {scopedFolders.length}
             </div>
           ) : null}
-          {isCollectionCategory ? (
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => { void handleExport(); }}
-                className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent"
-                title="导出全部提示词"
-              >
-                <Download className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={handleImport}
-                className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent"
-                title="导入提示词"
-              >
-                <Upload className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            {isCollectionCategory ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { void handleExport(); }}
+                  className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent"
+                  title="导出全部提示词"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImport}
+                  className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent"
+                  title="导入提示词"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                </button>
+                <span className="w-px h-5 bg-white/10" />
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={handleImportSeeds}
+              disabled={isImportingSeed}
+              className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent disabled:opacity-40"
+              title="导入内置提示词库"
+            >
+              <Database className={`h-3.5 w-3.5 ${isImportingSeed ? "animate-pulse" : ""}`} />
+            </button>
+          </div>
         </div>
 
 
@@ -805,7 +896,79 @@ export function FavoritesStudio(props: {
         </div>
       </section>
 
-      {!isLoading && scopedFolders.length === 0 && !isCollectionCategory ? null : null}
+      {!isLoading && sortedFavorites.length > 0 ? (
+        <section className="space-y-1.5">
+          <div className="text-xs text-white/40 px-1 mb-2">
+            {scopedFolders.length > 0 ? "未分类提示词" : `${activeCategory} · ${sortedFavorites.length} 条`}
+          </div>
+          {sortedFavorites.map((record, index) => {
+            const isExpanded = expandedId === record.id;
+            const isBusy = busyId === record.id;
+            const isEditingTitle = editingTitleId === record.id;
+            const displayTitle = record.title || record.content.slice(0, 28);
+            const isFirst = index === 0;
+            const isLast = index === sortedFavorites.length - 1;
+
+            return (
+              <article key={record.id} className="glass-panel rounded-2xl border border-white/10 transition">
+                <div className="flex items-center gap-2 px-3 py-2">
+                  {isEditingTitle ? (
+                    <>
+                      <input
+                        value={titleDraft}
+                        onChange={(e) => setTitleDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); void saveTitleEdit(record); }
+                          if (e.key === "Escape") cancelTitleEdit();
+                        }}
+                        className="min-w-0 flex-1 rounded-lg border border-accent/35 bg-black/25 px-2 py-1 text-xs text-white outline-none"
+                        autoFocus
+                      />
+                      <button type="button" onClick={() => { void saveTitleEdit(record); }} className="shrink-0 rounded-md p-0.5 text-white/55 transition hover:text-accent"><Check className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={cancelTitleEdit} className="shrink-0 rounded-md p-0.5 text-white/55 transition hover:text-rose-300"><X className="h-3.5 w-3.5" /></button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="min-w-0 flex-1 truncate text-xs text-white/70">{displayTitle}</span>
+                      <button type="button" onClick={() => { void handleSortAction(record.id, "pin"); }} disabled={isFirst} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"><Pin className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { void handleSortAction(record.id, "up"); }} disabled={isFirst} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"><ArrowUp className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { void handleSortAction(record.id, "down"); }} disabled={isLast} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"><ArrowDown className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { setEditingTitleId(record.id); setTitleDraft(record.title || ""); }} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent"><PencilLine className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { void handleDeletePrompt(record); }} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </>
+                  )}
+                  <button type="button" onClick={async () => {
+                    if (isExpanded) { await flushPendingSave(record.id, draftContent); setExpandedId(null); setDraftContent(""); }
+                    else { setExpandedId(record.id); setDraftContent(record.content); }
+                  }} className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/55 transition hover:text-white">
+                    {isExpanded ? "收起" : "展开"}
+                  </button>
+                </div>
+                {isExpanded ? (
+                  <div className="border-t border-white/5 px-3 py-3 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/35">
+                      <span>{record.provider}</span><span>·</span><span>{record.model}</span><span>·</span><span>{formatTimestamp(record.updatedAt ?? record.createdAt)}</span>
+                    </div>
+                    <textarea value={draftContent} onChange={(e) => { setDraftContent(e.target.value); debouncedSave(record.id, e.target.value); }} className="min-h-[150px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition focus:border-accent/40" />
+                    {autoSavedId === record.id ? <div className="inline-flex items-center gap-1 text-[11px] text-accent/70"><Check className="h-3 w-3" />已自动保存</div> : null}
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => { void handleCopy(record); }} className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white">
+                        {copiedId === record.id ? <><Check className="h-3.5 w-3.5" />已复制</> : <><Copy className="h-3.5 w-3.5" />一键复制</>}
+                      </button>
+                      <button type="button" onClick={() => { void optimizePrompt(record); }} disabled={isBusy} className="inline-flex items-center gap-1 rounded-xl border border-accent/35 bg-accent/12 px-3 py-2 text-xs text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-45">
+                        {isBusy ? <><LoaderCircle className="h-3.5 w-3.5 animate-spin" />优化中...</> : <><Sparkles className="h-3.5 w-3.5" />AI一键优化</>}
+                      </button>
+                      <button type="button" onClick={() => { void handleDeletePrompt(record); }} className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-rose-300 transition hover:text-rose-200">
+                        <Trash2 className="h-3.5 w-3.5" />删除
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </section>
+      ) : null}
     </div>
   );
 }

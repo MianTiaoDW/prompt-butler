@@ -85,6 +85,7 @@ export interface SavedPromptRecord {
   content: string;
   category: string;
   tags: string[];
+  order?: number;
 }
 
 export interface PromptWorkspaceState {
