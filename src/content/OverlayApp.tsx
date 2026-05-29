@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { AnimatePresence, motion, Reorder } from "framer-motion";
-import { Check, Plus, Search, Settings, Sparkles, X } from "lucide-react";
+import { Check, Plus, Search, Settings, X } from "lucide-react";
 import { Rnd } from "react-rnd";
 
 import { FavoritesStudio } from "./FavoritesStudio";
@@ -9,16 +9,20 @@ import { ImageStudio } from "./ImageStudio";
 import { RolePromptStudio } from "./RolePromptStudio";
 import {
   addCustomTab,
+  cleanupInvalidTabs,
   CORE_TABS,
   DEFAULT_PROMPT_TABS,
   deleteTab,
   getCustomTabs,
   getVisibleTabs,
   renameCustomTab,
-  saveTabOrder
+  saveTabOrder,
+  PROMPT_STORAGE_KEYS
 } from "../lib/prompt-library";
+import { useChromeStorage } from "../hooks/useChromeStorage";
 import { useExtensionSettings } from "../hooks/useExtensionSettings";
 import { subscribeToast } from "../lib/toast";
+import type { SavedPromptRecord } from "../types/prompt";
 
 interface OverlayAppProps {
   embedded?: boolean;
@@ -26,8 +30,17 @@ interface OverlayAppProps {
 
 export function OverlayApp({ embedded = false }: OverlayAppProps) {
   const { isLoading, isServiceReady, providerPreset, settings } = useExtensionSettings();
+  const iconUrl =
+    typeof chrome !== "undefined" && chrome.runtime?.getURL
+      ? chrome.runtime.getURL("icons/icon48.png")
+      : "/icons/icon48.png";
   const [activeTab, setActiveTab] = useState<string>(DEFAULT_PROMPT_TABS[0]);
   const [searchQuery, setSearchQuery] = useState("");
+  const favoritesStorage = useChromeStorage<SavedPromptRecord[]>(
+    PROMPT_STORAGE_KEYS.favorites,
+    []
+  );
+  const { value: favorites } = favoritesStorage;
   const [customTabs, setCustomTabs] = useState<string[]>([]);
   const [visibleTabs, setVisibleTabs] = useState<string[]>(DEFAULT_PROMPT_TABS.slice());
   const [isCreatingTab, setIsCreatingTab] = useState(false);
@@ -49,8 +62,10 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
   const isReorderingRef = useRef(false);
 
   useEffect(() => {
-    void getCustomTabs().then(setCustomTabs);
-    void getVisibleTabs().then(setVisibleTabs);
+    void cleanupInvalidTabs().then(() => {
+      void getCustomTabs().then(setCustomTabs);
+      void getVisibleTabs().then(setVisibleTabs);
+    });
   }, []);
 
   useEffect(() => {
@@ -69,6 +84,16 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
     (tab) => tab !== "角色设定" && tab !== "图像生成"
   );
   const availableCategories: string[] = [...libraryTabs];
+
+  const tabPromptCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tab of libraryTabs) {
+      counts[tab] = favorites.filter(
+        (r) => r.category === tab || r.category.startsWith(`${tab}/`)
+      ).length;
+    }
+    return counts;
+  }, [favorites, libraryTabs]);
 
   const handleCreateTab = async () => {
     try {
@@ -173,11 +198,11 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
     >
         <header className="drag-handle flex cursor-move items-center justify-between border-b border-white/10 px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent/14 text-accent">
-              <Sparkles className="h-5 w-5" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-accent via-accent-soft to-accent text-panel-950 shadow-[0_0_28px_rgba(0,255,132,0.24)]">
+              <img src={iconUrl} alt="" className="h-11 w-11 rounded-2xl" />
             </div>
             <div>
-              <div className="text-sm font-semibold tracking-[0.18em] text-accent/80">
+              <div className="text-sm font-semibold tracking-[0.08em] text-accent">
                 提示词生成管家
               </div>
               <div className="text-xs text-white/55">
@@ -187,7 +212,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70">
+            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.07] px-3 py-2 text-xs text-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
               <span
                 className={["h-2.5 w-2.5 rounded-full", statusDotClassName].join(" ")}
               />
@@ -196,7 +221,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
             <button
               type="button"
               onClick={openOptions}
-              className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70 transition hover:border-accent/40 hover:text-accent"
+              className="icon-button"
               aria-label="打开配置中心"
               title="配置中心"
             >
@@ -207,25 +232,25 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
 
         <div className="flex-1 overflow-y-auto p-5">
           <label className="block">
-            <span className="mb-2 block text-xs uppercase tracking-[0.24em] text-white/45">
+            <span className="mb-2 block text-xs uppercase tracking-[0.16em] text-white/42">
               搜索
             </span>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-accent" />
               <input
                 value={searchQuery}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);
                 }}
                 placeholder="搜索 nano、运镜、打斗、光影... 等关键字"
-                className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-accent/40"
+                className="form-field w-full py-3 pl-11 pr-4"
               />
             </div>
           </label>
 
           <nav
             ref={navRef}
-            className="no-scrollbar mt-4 overflow-x-auto pb-2"
+            className="no-scrollbar mt-4 -mx-1 overflow-x-auto px-1 pb-2"
             style={{ touchAction: "pan-x", overscrollBehaviorX: "contain" }}
             onMouseDown={startHorizontalDrag}
             onMouseMove={moveHorizontalDrag}
@@ -239,7 +264,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
               setVisibleTabs(newOrder);
               await saveTabOrder(newOrder);
             }}
-            className="flex gap-2"
+            className="flex w-max gap-2 pr-8"
           >
             {visibleTabs.map((tab) => {
               const isCustom = customTabs.includes(tab);
@@ -326,13 +351,23 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
                     }
                     title={isCustom ? "双击重命名" : undefined}
                     className={[
-                      "whitespace-nowrap rounded-full border px-4 py-2 text-sm transition",
+                      "whitespace-nowrap rounded-full border px-4 py-2 text-sm transition inline-flex items-center gap-1.5",
                       activeTab === tab
                         ? "border-accent/45 bg-accent/14 text-accent"
                         : "border-white/10 bg-white/5 text-white/70 hover:border-white/20 hover:text-white"
                     ].join(" ")}
                   >
                     {tab}
+                    {tabPromptCounts[tab] !== undefined ? (
+                      <span className={[
+                        "rounded-full px-1.5 py-0.5 text-[10px] leading-none",
+                        activeTab === tab
+                          ? "bg-accent/25 text-accent"
+                          : "bg-white/10 text-white/45"
+                      ].join(" ")}>
+                        {tabPromptCounts[tab]}
+                      </span>
+                    ) : null}
                   </button>
                   {isDeletable ? (
                     <button
@@ -401,7 +436,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
                   setTabNameDraft("");
                   setPanelErrorMessage("");
                 }}
-                className="whitespace-nowrap rounded-full border border-dashed border-white/15 bg-transparent px-3 py-2 text-sm text-white/40 transition hover:border-accent/40 hover:text-accent"
+                className="whitespace-nowrap rounded-full border border-dashed border-white/15 bg-transparent px-3 py-2 text-sm text-white/45 transition hover:border-accent/40 hover:text-accent"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -410,7 +445,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
           </nav>
 
           {panelErrorMessage ? (
-            <div className="mt-2 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
+            <div className="mt-3 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-xs text-rose-200">
               {panelErrorMessage}
             </div>
           ) : null}
@@ -440,7 +475,7 @@ export function OverlayApp({ embedded = false }: OverlayAppProps) {
                 activeCategory={activeTab}
               />
             ) : (
-              <div className="glass-panel rounded-3xl border border-dashed border-white/10 px-4 py-6">
+              <div className="glass-card border-dashed px-4 py-6">
                 <div className="text-sm font-medium text-white/85">{activeTab} 模块稍后接入</div>
                 <p className="mt-2 text-sm leading-6 text-white/55">
                   当前重点已经切到“角色设定”主工作流。收藏夹、Nano 精修、AI 视频运镜等模块会在后续阶段继续补全。

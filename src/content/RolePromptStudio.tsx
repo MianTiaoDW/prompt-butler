@@ -4,7 +4,6 @@ import {
   Copy,
   ImagePlus,
   LoaderCircle,
-  PencilLine,
   Save,
   Sparkles,
   Wand2,
@@ -15,6 +14,7 @@ import { useChromeStorage } from "../hooks/useChromeStorage";
 import { saveImageWorkspacePrompt } from "../lib/image-library";
 import {
   createPromptFolder,
+  ensureDefaultRolePreset,
   PROMPT_STORAGE_KEYS,
   savePromptToFavorites
 } from "../lib/prompt-library";
@@ -107,6 +107,20 @@ export function RolePromptStudio(props: {
 
     return () => window.clearTimeout(timer);
   }, [savedFormat]);
+
+  useEffect(() => {
+    void ensureDefaultRolePreset().then(() => {
+      // 刷新 workspace state 以显示默认角色
+      void storageGet<PromptWorkspaceState>(
+        PROMPT_STORAGE_KEYS.workspace,
+        defaultWorkspaceState
+      ).then((ws) => {
+        if (ws.rolePreset && !workspaceState.rolePreset) {
+          void setWorkspaceState(() => ws);
+        }
+      });
+    });
+  }, []);
 
   useEffect(() => {
     void getPromptTask().then((task) => {
@@ -296,27 +310,58 @@ export function RolePromptStudio(props: {
 
   return (
     <div className="space-y-4">
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-medium text-white/88">角色预设区</div>
-            <div className="mt-1 text-xs text-white/45">
-              保存后锁定编辑，支持 JSON 或自然语言
+      <section className="glass-card p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="section-label">角色预设区</div>
+            <div className="section-hint">
+              设定一个角色，支持JSON或大白话
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setIsExpanded((current) => !current);
-            }}
-            className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/65 transition hover:text-white"
-          >
-            {isExpanded ? "收起" : "展开"}
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {isExpanded ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void updateWorkspace({
+                      rolePresetLocked: true
+                    });
+                    setPanelMessage("角色已锁定，可输入需求生成");
+                  }}
+                  disabled={workspaceState.rolePresetLocked || !workspaceState.rolePreset.trim()}
+                  className="gradient-button rounded-xl px-3 py-2 text-xs"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void updateWorkspace({
+                      rolePresetLocked: false
+                    });
+                    setPanelMessage("角色已恢复可编辑");
+                  }}
+                  className="ghost-button rounded-xl px-2.5 py-2 text-xs"
+                >
+                  修改
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setIsExpanded((current) => !current);
+              }}
+              className="rounded-xl border border-white/10 bg-white/[0.06] px-2.5 py-2 text-xs text-white/58 transition hover:border-accent/30 hover:text-white"
+            >
+              {isExpanded ? "收起" : "展开"}
+            </button>
+          </div>
         </div>
 
         {isExpanded ? (
-          <div className="mt-4 space-y-3">
+          <div className="mt-3">
             <textarea
               value={workspaceState.rolePreset}
               onChange={(event) => {
@@ -325,45 +370,16 @@ export function RolePromptStudio(props: {
                 });
               }}
               disabled={workspaceState.rolePresetLocked || isLoading}
-              placeholder="例如：冷冽女剑士，银白短发，寡言，未来废土世界观，动作凌厉..."
-              className="min-h-[120px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition placeholder:text-white/25 disabled:bg-white/5 disabled:text-white/45"
+              placeholder="例如：你是一个资深 AI 绘画提示词专家，擅长把用户的简单想法扩写成完整、可执行、画面感强的提示词。"
+              className="form-field min-h-[150px] w-full resize-y rounded-[1.15rem] px-4 py-3 text-[15px] leading-7 disabled:bg-white/5 disabled:text-white/45"
             />
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  void updateWorkspace({
-                    rolePresetLocked: true
-                  });
-                  setPanelMessage("角色已锁定，可输入需求生成");
-                }}
-                disabled={workspaceState.rolePresetLocked || !workspaceState.rolePreset.trim()}
-                className="inline-flex items-center gap-2 rounded-2xl border border-accent/35 bg-accent/12 px-4 py-3 text-sm text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Save className="h-4 w-4" />
-                保存角色
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void updateWorkspace({
-                    rolePresetLocked: false
-                  });
-                  setPanelMessage("角色已恢复可编辑");
-                }}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 transition hover:border-white/20 hover:text-white"
-              >
-                <PencilLine className="h-4 w-4" />
-                修改
-              </button>
-            </div>
           </div>
         ) : null}
       </section>
 
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
-        <div className="text-sm font-medium text-white/88">用户需求区</div>
-        <div className="mt-1 text-xs text-white/45">
+      <section className="glass-card p-3">
+        <div className="section-label">用户需求区</div>
+        <div className="section-hint">
           描述希望呈现的场景、风格或镜头语言
         </div>
         <textarea
@@ -374,13 +390,13 @@ export function RolePromptStudio(props: {
             });
           }}
           placeholder="例如：做成电影海报风，暴雨夜站在霓虹街头，强烈逆光和慢门动势。"
-          className="mt-4 min-h-[92px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition placeholder:text-white/25"
+          className="form-field mt-3 min-h-[112px] w-full resize-y rounded-[1.15rem] px-4 py-3 text-[15px] leading-7"
         />
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-3 space-y-3">
           <div className="flex flex-wrap items-center gap-3">
             {referenceImages.length < 8 ? (
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 transition hover:border-white/20 hover:text-white">
+              <label className="ghost-button cursor-pointer px-4 py-3 text-[13px]">
                 <ImagePlus className="h-4 w-4" />
                 添加参考图
                 <input
@@ -423,7 +439,7 @@ export function RolePromptStudio(props: {
                   <img
                     src={img.dataUrl}
                     alt={img.name}
-                    className="h-16 w-16 rounded-xl border border-white/10 object-cover"
+                    className="h-16 w-16 rounded-2xl border border-white/10 object-cover shadow-[0_10px_26px_rgba(0,0,0,0.24)]"
                   />
                   <button
                     type="button"
@@ -442,12 +458,12 @@ export function RolePromptStudio(props: {
         </div>
       </section>
 
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
+      <section className="glass-card p-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-medium text-white/88">生成逻辑</div>
-            <div className="mt-1 text-xs text-white/45">
-              有图走视觉模型，无图走推理模型
+            <div className="section-label">生成提示词</div>
+            <div className="section-hint">
+              参考图走视觉模型，否则走推理模型
             </div>
           </div>
           <button
@@ -456,7 +472,7 @@ export function RolePromptStudio(props: {
               void handleGenerate();
             }}
             disabled={!canGenerate || isGenerating}
-            className="inline-flex items-center gap-1.5 rounded-2xl border border-accent/35 bg-accent/12 px-3 py-2 text-xs text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-45"
+            className="gradient-button px-3 py-2 text-[13px]"
           >
             {isGenerating ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -467,28 +483,28 @@ export function RolePromptStudio(props: {
           </button>
         </div>
 
-        <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-xs leading-5 text-white/58">
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-[11px] leading-5 text-white/48">
           {isServiceReady
             ? panelMessage
             : "请先在配置中心完成连接配置"}
         </div>
       </section>
 
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
-        <div className="text-sm font-medium text-white/88">输出结果区</div>
-        <div className="mt-1 text-xs text-white/45">
+      <section className="glass-card p-4">
+        <div className="section-label">输出结果区</div>
+        <div className="section-hint">
           输出中文、英文及结构化 JSON
         </div>
 
         <div className="mt-4 space-y-3">
           {generationResult && !generationResult.ok ? (
-            <div className="rounded-3xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-sm text-rose-200">
+            <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-[14px] leading-6 text-rose-200">
               {generationResult.message}
             </div>
           ) : null}
 
           {outputs.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-white/5 px-4 py-8 text-sm leading-6 text-white/40">
+            <div className="rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-8 text-[14px] leading-6 text-white/38">
               生成完成后在此展示、复制或收藏
             </div>
           ) : null}
@@ -496,17 +512,17 @@ export function RolePromptStudio(props: {
           {outputs.map((item) => (
             <article
               key={item.format}
-              className="rounded-3xl border border-white/10 bg-black/20 px-4 py-4"
+              className="media-card px-4 py-4"
             >
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-medium text-white/85">{item.title}</div>
+                <div className="text-[13px] font-semibold text-white/85">{item.title}</div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       void handleCopy(item.format, item.text);
                     }}
-                    className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
+                    className="ghost-button rounded-xl px-3 py-2 text-[11px]"
                   >
                     {copiedFormat === item.format ? (
                       <Check className="h-3.5 w-3.5" />
@@ -522,7 +538,7 @@ export function RolePromptStudio(props: {
                         onClick={() => {
                           saveEditing(item.format);
                         }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-accent/35 bg-accent/12 px-3 py-2 text-xs text-accent transition hover:bg-accent/18"
+                        className="gradient-button rounded-xl px-3 py-2 text-[11px]"
                       >
                         <Check className="h-3.5 w-3.5" />
                         保存修改
@@ -532,7 +548,7 @@ export function RolePromptStudio(props: {
                         onClick={() => {
                           setEditingFormat(null);
                         }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
+                        className="ghost-button rounded-xl px-3 py-2 text-[11px]"
                       >
                         取消
                       </button>
@@ -544,7 +560,7 @@ export function RolePromptStudio(props: {
                         onClick={() => {
                           startEditing(item.format, item.text);
                         }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
+                        className="ghost-button rounded-xl px-3 py-2 text-[11px]"
                       >
                         <Wand2 className="h-3.5 w-3.5" />
                         重新编辑
@@ -554,7 +570,7 @@ export function RolePromptStudio(props: {
                         onClick={() => {
                           void openFolderPicker(item.format, item.text);
                         }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
+                        className="ghost-button rounded-xl px-3 py-2 text-[11px]"
                       >
                         <Save className="h-3.5 w-3.5" />
                         {savedFormat === item.format ? "已收藏" : "保存到收藏"}
@@ -568,10 +584,10 @@ export function RolePromptStudio(props: {
                 <textarea
                   value={editingText}
                   onChange={(e) => { setEditingText(e.target.value); }}
-                  className="mt-3 min-h-[120px] w-full rounded-3xl border border-accent/35 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition"
+                  className="form-field mt-3 min-h-[120px] w-full resize-y text-[14px] leading-7"
                 />
               ) : (
-                <pre className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-white/68">
+                <pre className="mt-3 whitespace-pre-wrap break-words text-[14px] leading-7 text-white/68">
                   {item.text}
                 </pre>
               )}
@@ -588,12 +604,12 @@ export function RolePromptStudio(props: {
           }}
         >
           <div
-            className="w-72 rounded-3xl border border-white/10 bg-panel-900/95 p-5 shadow-glass"
+            className="aurora-shell w-72 rounded-[1.35rem] p-5"
             onClick={(e) => {
               e.stopPropagation();
             }}
           >
-            <div className="text-sm font-medium text-white/88 mb-3">保存到收藏夹</div>
+            <div className="section-label mb-3">保存到收藏夹</div>
 
             {pickerFolders.length > 0 ? (
               <div className="space-y-1 mb-3 max-h-40 overflow-y-auto no-scrollbar">
@@ -604,14 +620,14 @@ export function RolePromptStudio(props: {
                     onClick={() => {
                       void confirmSaveToFolder(folder.name);
                     }}
-                    className="w-full rounded-xl border border-white/5 bg-white/5 px-3 py-2.5 text-left text-sm text-white/70 transition hover:border-accent/30 hover:text-white"
+                    className="w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2.5 text-left text-[13px] text-white/68 transition hover:border-accent/30 hover:text-white"
                   >
                     {folder.name}
                   </button>
                 ))}
               </div>
             ) : (
-              <div className="text-xs text-white/40 mb-3">暂无收藏夹</div>
+              <div className="text-[11px] text-white/35 mb-3">暂无收藏夹</div>
             )}
 
             <div className="flex items-center gap-2 mb-3">
@@ -619,7 +635,7 @@ export function RolePromptStudio(props: {
                 value={newFolderName}
                 onChange={(e) => { setNewFolderName(e.target.value); }}
                 placeholder="新建收藏夹名称"
-                className="flex-1 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-white outline-none placeholder:text-white/25"
+                className="form-field flex-1 rounded-xl px-3 py-2 text-[13px]"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     void handleCreateAndSave();
@@ -630,7 +646,7 @@ export function RolePromptStudio(props: {
                 type="button"
                 onClick={() => { void handleCreateAndSave(); }}
                 disabled={!newFolderName.trim()}
-                className="shrink-0 rounded-xl border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-accent transition hover:bg-accent/18 disabled:opacity-30"
+                className="gradient-button shrink-0 rounded-xl px-3 py-2 text-[13px] disabled:opacity-30"
               >
                 新建
               </button>
@@ -641,7 +657,7 @@ export function RolePromptStudio(props: {
               onClick={() => {
                 void confirmSaveToFolder(null);
               }}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white/60 transition hover:text-white"
+              className="ghost-button w-full rounded-xl px-3 py-2.5 text-[13px]"
             >
               直接保存到收藏根目录
             </button>

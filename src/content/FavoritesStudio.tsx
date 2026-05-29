@@ -24,6 +24,7 @@ import {
   deletePromptFolder,
   moveFavoriteUp,
   moveFavoriteDown,
+  migrateSeedCategories,
   pinFavoriteToTop,
   PROMPT_STORAGE_KEYS,
   recommendPromptTags,
@@ -32,7 +33,10 @@ import {
   searchPromptRecords,
   updateFavoritePrompt,
   importSeedPrompts,
-  ensureSeedCategories
+  ensureSeedCategories,
+  ensureSeedFolders,
+  SEED_CATEGORY_MAP,
+  SEED_DEFAULT_FOLDER
 } from "../lib/prompt-library";
 import { SEED_PROMPTS } from "../lib/seed-prompts";
 import { sendRuntimeMessage } from "../lib/runtime";
@@ -82,6 +86,7 @@ export function FavoritesStudio(props: {
   const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
   const [isCreatingPrompt, setIsCreatingPrompt] = useState(false);
   const [promptDraft, setPromptDraft] = useState("");
+  const [promptTitleDraft, setPromptTitleDraft] = useState("");
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isImportingSeed, setIsImportingSeed] = useState(false);
@@ -89,20 +94,19 @@ export function FavoritesStudio(props: {
   const handleImportSeeds = async () => {
     setIsImportingSeed(true);
     try {
-      const remapped = SEED_PROMPTS.map((p) =>
-        p.category === "角色设定" ? { ...p, category: "收藏" } : p
-      );
-      const cats = [...new Set(remapped.map((p) => p.category))];
+      // 将种子提示词归入各分类下的"默认内置提示词"文件夹
+      const remapped = SEED_PROMPTS.map((p) => {
+        const baseCategory = SEED_CATEGORY_MAP[p.category] || p.category;
+        return { ...p, category: `${baseCategory}/${SEED_DEFAULT_FOLDER}` };
+      });
+      const cats = [...new Set(remapped.map((p) => p.category.split("/")[0]))];
       await ensureSeedCategories(cats);
+      await ensureSeedFolders();
+      const { records: migratedRecords, changed: migratedChanged } = await migrateSeedCategories();
       const count = await importSeedPrompts(remapped);
-      // 无论有无新增，都强制刷新 React 状态和 storage 同步
-      const latest = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+      const latest = migratedChanged ? migratedRecords : await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
       await setFavorites(latest);
-      if (count > 0) {
-        showToast(`已导入 ${count} 条内置提示词`);
-      } else {
-        showToast(`已加载 ${latest.length} 条提示词（含内置库）`);
-      }
+      showToast(`已加载 ${latest.length} 条提示词（含内置库）`);
     } finally {
       setIsImportingSeed(false);
     }
@@ -123,6 +127,14 @@ export function FavoritesStudio(props: {
   );
   const activeFolder = scopedFolders.find((folder) => folder.id === selectedFolderId) ?? null;
   const scopedCategoryName = activeFolder ? `${activeCategory}/${activeFolder.name}` : activeCategory;
+  const categoryPromptCount = useMemo(
+    () =>
+      favorites.filter(
+        (record) =>
+          record.category === activeCategory || record.category.startsWith(`${activeCategory}/`)
+      ).length,
+    [activeCategory, favorites]
+  );
 
   const filteredFavorites = searchPromptRecords(
     favorites.filter((record) => record.category === scopedCategoryName),
@@ -207,7 +219,7 @@ export function FavoritesStudio(props: {
       setSelectedFolderId(null);
       setIsCreatingFolder(false);
       setFolderNameDraft("");
-      setPanelMessage(`已在“${activeCategory}”下新建文件夹：${folder.name}`);
+      setPanelMessage(`已在"${activeCategory}"下新建文件夹：${folder.name}`);
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "新建文件夹失败。");
     }
@@ -289,7 +301,7 @@ export function FavoritesStudio(props: {
 
     const record: SavedPromptRecord = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title: "",
+      title: promptTitleDraft.trim(),
       createdAt: new Date().toISOString(),
       provider: settings.provider,
       model: settings.reasoningModel || settings.visionModel || "未设置模型",
@@ -301,8 +313,9 @@ export function FavoritesStudio(props: {
 
     await setFavorites((current) => [record, ...current]);
     setPromptDraft("");
+    setPromptTitleDraft("");
     setIsCreatingPrompt(false);
-    setPanelMessage(`已添加提示词到“${activeFolder.name}”。`);
+    setPanelMessage(`已添加提示词到"${activeFolder.name}"。`);
   };
 
   const handleDeletePrompt = async (record: SavedPromptRecord) => {
@@ -429,7 +442,7 @@ export function FavoritesStudio(props: {
   if (activeFolder) {
     return (
       <div className="space-y-4">
-        <section className="glass-panel rounded-3xl border border-white/10 p-4">
+        <section className="glass-card p-4">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -437,13 +450,26 @@ export function FavoritesStudio(props: {
                 setSelectedFolderId(null);
                 setIsCreatingPrompt(false);
                 setPromptDraft("");
+                setPromptTitleDraft("");
               }}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
+              className="ghost-button px-3 py-2 text-xs"
             >
               <ArrowLeft className="h-4 w-4" />
               返回文件夹
             </button>
             <div className="text-sm font-medium text-white/88">{activeFolder.name}</div>
+            <button
+              type="button"
+              onClick={() => {
+                setIsCreatingPrompt(true);
+                setPromptDraft("");
+                setPromptTitleDraft("");
+              }}
+              className="ghost-button px-3 py-2 text-xs"
+            >
+              <Plus className="h-4 w-4" />
+              添加
+            </button>
           </div>
         </section>
 
@@ -459,7 +485,7 @@ export function FavoritesStudio(props: {
             return (
               <article
                 key={record.id}
-                className="glass-panel rounded-2xl border border-white/10 transition"
+                className="media-card transition"
               >
                 <div className="flex items-center gap-2 px-3 py-2">
                   {isEditingTitle ? (
@@ -512,7 +538,7 @@ export function FavoritesStudio(props: {
                           void handleSortAction(record.id, "pin");
                         }}
                         disabled={isFirst}
-                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"
+                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-20"
                         title="置顶"
                       >
                         <Pin className="h-3.5 w-3.5" />
@@ -523,7 +549,7 @@ export function FavoritesStudio(props: {
                           void handleSortAction(record.id, "up");
                         }}
                         disabled={isFirst}
-                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"
+                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-20"
                         title="上移"
                       >
                         <ArrowUp className="h-3.5 w-3.5" />
@@ -534,7 +560,7 @@ export function FavoritesStudio(props: {
                           void handleSortAction(record.id, "down");
                         }}
                         disabled={isLast}
-                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"
+                        className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-20"
                         title="下移"
                       >
                         <ArrowDown className="h-3.5 w-3.5" />
@@ -578,7 +604,7 @@ export function FavoritesStudio(props: {
                         setDraftCategory(record.category);
                       }
                     }}
-                    className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/55 transition hover:text-white"
+                    className="shrink-0 rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] text-white/58 transition hover:border-accent/30 hover:text-white"
                   >
                     {isExpanded ? "收起" : "展开"}
                   </button>
@@ -601,11 +627,11 @@ export function FavoritesStudio(props: {
                         setDraftContent(newContent);
                         debouncedSave(record.id, newContent);
                       }}
-                      className="min-h-[150px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition focus:border-accent/40"
+                      className="form-field min-h-[150px] w-full resize-y leading-6"
                     />
 
                     {autoSavedId === record.id ? (
-                      <div className="inline-flex items-center gap-1 text-[11px] text-accent/70">
+                      <div className="inline-flex items-center gap-1 text-[11px] text-accent/75">
                         <Check className="h-3 w-3" />
                         已自动保存
                       </div>
@@ -617,7 +643,7 @@ export function FavoritesStudio(props: {
                         onClick={() => {
                           void handleCopy(record);
                         }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white"
+                        className="ghost-button rounded-xl px-3 py-2 text-xs"
                       >
                         {copiedId === record.id ? (
                           <Check className="h-3.5 w-3.5" />
@@ -633,7 +659,7 @@ export function FavoritesStudio(props: {
                           void optimizePrompt(record);
                         }}
                         disabled={isBusy}
-                        className="inline-flex items-center gap-1 rounded-xl border border-accent/35 bg-accent/12 px-3 py-2 text-xs text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-45"
+                        className="gradient-button rounded-xl px-3 py-2 text-xs"
                       >
                         {isBusy ? (
                           <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -648,7 +674,7 @@ export function FavoritesStudio(props: {
                         onClick={() => {
                           void handleDeletePrompt(record);
                         }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-rose-300 transition hover:text-rose-200"
+                        className="ghost-button rounded-xl px-3 py-2 text-xs text-rose-300 hover:text-rose-200"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                         删除
@@ -661,48 +687,66 @@ export function FavoritesStudio(props: {
           })}
 
           {isCreatingPrompt ? (
-            <section className="glass-panel rounded-3xl border border-white/10 p-4">
-              <textarea
-                value={promptDraft}
-                onChange={(event) => {
-                  setPromptDraft(event.target.value);
+            <div
+              className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+              onClick={() => {
+                setIsCreatingPrompt(false);
+                setPromptDraft("");
+                setPromptTitleDraft("");
+              }}
+            >
+              <div
+                className="aurora-shell mx-4 w-full max-w-lg rounded-[1.35rem] p-6"
+                onClick={(e) => {
+                  e.stopPropagation();
                 }}
-                className="min-h-[140px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition"
-                placeholder="输入新的提示词内容"
-              />
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleCreatePrompt();
+              >
+                <div className="section-label mb-3">
+                  添加提示词到「{activeFolder.name}」
+                </div>
+                <input
+                  value={promptTitleDraft}
+                  onChange={(e) => {
+                    setPromptTitleDraft(e.target.value);
                   }}
-                  className="rounded-2xl border border-accent/35 bg-accent/12 px-4 py-2 text-xs text-accent"
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCreatingPrompt(false);
-                    setPromptDraft("");
+                  placeholder="提示词标题（可选）"
+                  className="form-field mb-3 w-full rounded-xl px-4 py-2.5 text-sm"
+                />
+                <textarea
+                  value={promptDraft}
+                  onChange={(event) => {
+                    setPromptDraft(event.target.value);
                   }}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-white/70"
-                >
-                  取消
-                </button>
+                  className="form-field min-h-[160px] w-full resize-y rounded-xl px-4 py-3 text-sm leading-6"
+                  placeholder="输入新的提示词内容"
+                  autoFocus
+                />
+                <div className="mt-4 flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingPrompt(false);
+                      setPromptDraft("");
+                      setPromptTitleDraft("");
+                    }}
+                    className="ghost-button px-5 py-2.5 text-sm"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleCreatePrompt();
+                    }}
+                    disabled={!promptDraft.trim()}
+                    className="gradient-button px-5 py-2.5 text-sm disabled:opacity-40"
+                  >
+                    确认
+                  </button>
+                </div>
               </div>
-            </section>
+            </div>
           ) : null}
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsCreatingPrompt(true);
-            }}
-            className="w-full rounded-3xl border border-dashed border-white/10 px-4 py-4 text-sm text-white/70 transition hover:border-accent/35 hover:text-accent"
-          >
-            + 添加提示词
-          </button>
         </section>
       </div>
     );
@@ -710,21 +754,19 @@ export function FavoritesStudio(props: {
 
   return (
     <div className="space-y-4">
-      <section className="glass-panel rounded-3xl border border-white/10 p-4">
+      <section className="glass-card p-4">
         <div className="flex items-center gap-3">
           <div className="text-sm font-medium text-white/88">{activeCategory}文件夹</div>
-          {isCollectionCategory ? (
-            <div className="rounded-2xl border border-accent/25 bg-accent/10 px-2.5 py-1 text-xs text-accent">
-              {scopedFolders.length}
-            </div>
-          ) : null}
+          <div className="rounded-2xl border border-accent/35 bg-transparent px-2.5 py-1 text-xs font-semibold text-accent">
+            {categoryPromptCount} 条
+          </div>
           <div className="ml-auto flex items-center gap-2">
             {isCollectionCategory ? (
               <>
                 <button
                   type="button"
                   onClick={() => { void handleExport(); }}
-                  className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent"
+                  className="rounded-xl border border-white/10 bg-white/[0.06] p-2 text-white/50 transition hover:border-accent/30 hover:text-accent"
                   title="导出全部提示词"
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -732,7 +774,7 @@ export function FavoritesStudio(props: {
                 <button
                   type="button"
                   onClick={handleImport}
-                  className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent"
+                  className="rounded-xl border border-white/10 bg-white/[0.06] p-2 text-white/50 transition hover:border-accent/30 hover:text-accent"
                   title="导入提示词"
                 >
                   <Upload className="h-3.5 w-3.5" />
@@ -744,7 +786,7 @@ export function FavoritesStudio(props: {
               type="button"
               onClick={handleImportSeeds}
               disabled={isImportingSeed}
-              className="rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-accent disabled:opacity-40"
+              className="rounded-xl border border-white/10 bg-white/[0.06] p-2 text-white/50 transition hover:border-accent/30 hover:text-accent disabled:opacity-40"
               title="导入内置提示词库"
             >
               <Database className={`h-3.5 w-3.5 ${isImportingSeed ? "animate-pulse" : ""}`} />
@@ -762,7 +804,7 @@ export function FavoritesStudio(props: {
               return (
                 <div
                   key={folder.id}
-                  className="flex h-24 w-24 flex-col justify-between rounded-3xl border border-accent/35 bg-black/20 p-3"
+                  className="flex h-24 w-24 flex-col justify-between rounded-[1.35rem] border border-accent/35 bg-black/25 p-3"
                 >
                   <input
                     value={folderNameDraft}
@@ -827,8 +869,8 @@ export function FavoritesStudio(props: {
                     setFolderNameDraft(folder.name);
                   }}
                   className={[
-                    "glass-panel flex h-24 w-24 flex-col items-center justify-center rounded-3xl border text-center transition",
-                    "border-white/10 bg-white/5 text-white/70",
+                    "glass-card flex h-24 w-24 flex-col items-center justify-center rounded-[1.35rem] border text-center transition",
+                    "border-white/10 bg-white/[0.06] text-white/70 hover:border-accent/30 hover:text-white",
                     isDragging ? "opacity-60" : ""
                   ].join(" ")}
                 >
@@ -849,7 +891,7 @@ export function FavoritesStudio(props: {
           })}
 
           {isCreatingFolder ? (
-            <div className="glass-panel flex h-24 w-24 flex-col justify-between rounded-3xl border border-dashed border-accent/35 p-3">
+            <div className="glass-card flex h-24 w-24 flex-col justify-between rounded-[1.35rem] border border-dashed border-accent/35 p-3">
               <input
                 value={folderNameDraft}
                 onChange={(event) => {
@@ -887,7 +929,7 @@ export function FavoritesStudio(props: {
                 setIsCreatingFolder(true);
                 setFolderNameDraft("");
               }}
-              className="glass-panel flex h-24 w-24 items-center justify-center rounded-3xl border border-dashed border-white/10 text-white/60 transition hover:border-accent/35 hover:text-accent"
+              className="glass-card flex h-24 w-24 items-center justify-center rounded-[1.35rem] border border-dashed border-white/10 text-white/60 transition hover:border-accent/35 hover:text-accent"
               aria-label="新建文件夹"
             >
               <Plus className="h-8 w-8" />
@@ -898,8 +940,8 @@ export function FavoritesStudio(props: {
 
       {!isLoading && sortedFavorites.length > 0 ? (
         <section className="space-y-1.5">
-          <div className="text-xs text-white/40 px-1 mb-2">
-            {scopedFolders.length > 0 ? "未分类提示词" : `${activeCategory} · ${sortedFavorites.length} 条`}
+          <div className="px-1 mb-2 text-xs text-accent/70">
+            {scopedFolders.length > 0 ? `未分类提示词 · ${sortedFavorites.length} 条` : `${activeCategory} · ${sortedFavorites.length} 条`}
           </div>
           {sortedFavorites.map((record, index) => {
             const isExpanded = expandedId === record.id;
@@ -910,7 +952,7 @@ export function FavoritesStudio(props: {
             const isLast = index === sortedFavorites.length - 1;
 
             return (
-              <article key={record.id} className="glass-panel rounded-2xl border border-white/10 transition">
+              <article key={record.id} className="media-card transition">
                 <div className="flex items-center gap-2 px-3 py-2">
                   {isEditingTitle ? (
                     <>
@@ -930,9 +972,9 @@ export function FavoritesStudio(props: {
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-xs text-white/70">{displayTitle}</span>
-                      <button type="button" onClick={() => { void handleSortAction(record.id, "pin"); }} disabled={isFirst} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"><Pin className="h-3.5 w-3.5" /></button>
-                      <button type="button" onClick={() => { void handleSortAction(record.id, "up"); }} disabled={isFirst} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"><ArrowUp className="h-3.5 w-3.5" /></button>
-                      <button type="button" onClick={() => { void handleSortAction(record.id, "down"); }} disabled={isLast} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:opacity-20 disabled:cursor-not-allowed"><ArrowDown className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { void handleSortAction(record.id, "pin"); }} disabled={isFirst} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-20"><Pin className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { void handleSortAction(record.id, "up"); }} disabled={isFirst} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-20"><ArrowUp className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => { void handleSortAction(record.id, "down"); }} disabled={isLast} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-20"><ArrowDown className="h-3.5 w-3.5" /></button>
                       <button type="button" onClick={() => { setEditingTitleId(record.id); setTitleDraft(record.title || ""); }} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-accent"><PencilLine className="h-3.5 w-3.5" /></button>
                       <button type="button" onClick={() => { void handleDeletePrompt(record); }} className="shrink-0 rounded-lg p-1 text-white/35 transition hover:text-rose-300"><Trash2 className="h-3.5 w-3.5" /></button>
                     </>
@@ -940,7 +982,7 @@ export function FavoritesStudio(props: {
                   <button type="button" onClick={async () => {
                     if (isExpanded) { await flushPendingSave(record.id, draftContent); setExpandedId(null); setDraftContent(""); }
                     else { setExpandedId(record.id); setDraftContent(record.content); }
-                  }} className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/55 transition hover:text-white">
+                  }} className="shrink-0 rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] text-white/58 transition hover:border-accent/30 hover:text-white">
                     {isExpanded ? "收起" : "展开"}
                   </button>
                 </div>
@@ -949,16 +991,16 @@ export function FavoritesStudio(props: {
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/35">
                       <span>{record.provider}</span><span>·</span><span>{record.model}</span><span>·</span><span>{formatTimestamp(record.updatedAt ?? record.createdAt)}</span>
                     </div>
-                    <textarea value={draftContent} onChange={(e) => { setDraftContent(e.target.value); debouncedSave(record.id, e.target.value); }} className="min-h-[150px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition focus:border-accent/40" />
-                    {autoSavedId === record.id ? <div className="inline-flex items-center gap-1 text-[11px] text-accent/70"><Check className="h-3 w-3" />已自动保存</div> : null}
+                    <textarea value={draftContent} onChange={(e) => { setDraftContent(e.target.value); debouncedSave(record.id, e.target.value); }} className="form-field min-h-[150px] w-full resize-y leading-6" />
+                    {autoSavedId === record.id ? <div className="inline-flex items-center gap-1 text-[11px] text-accent/75"><Check className="h-3 w-3" />已自动保存</div> : null}
                     <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => { void handleCopy(record); }} className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/70 transition hover:text-white">
+                      <button type="button" onClick={() => { void handleCopy(record); }} className="ghost-button rounded-xl px-3 py-2 text-xs">
                         {copiedId === record.id ? <><Check className="h-3.5 w-3.5" />已复制</> : <><Copy className="h-3.5 w-3.5" />一键复制</>}
                       </button>
-                      <button type="button" onClick={() => { void optimizePrompt(record); }} disabled={isBusy} className="inline-flex items-center gap-1 rounded-xl border border-accent/35 bg-accent/12 px-3 py-2 text-xs text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-45">
+                      <button type="button" onClick={() => { void optimizePrompt(record); }} disabled={isBusy} className="gradient-button rounded-xl px-3 py-2 text-xs">
                         {isBusy ? <><LoaderCircle className="h-3.5 w-3.5 animate-spin" />优化中...</> : <><Sparkles className="h-3.5 w-3.5" />AI一键优化</>}
                       </button>
-                      <button type="button" onClick={() => { void handleDeletePrompt(record); }} className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-rose-300 transition hover:text-rose-200">
+                      <button type="button" onClick={() => { void handleDeletePrompt(record); }} className="ghost-button rounded-xl px-3 py-2 text-xs text-rose-300 hover:text-rose-200">
                         <Trash2 className="h-3.5 w-3.5" />删除
                       </button>
                     </div>

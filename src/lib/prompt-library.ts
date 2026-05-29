@@ -1,4 +1,5 @@
 import { storageGet, storageSet } from "./storage";
+import { SEED_PROMPTS } from "./seed-prompts";
 import type {
   PromptFolder,
   PromptOutputFormat,
@@ -391,6 +392,88 @@ export async function ensureSeedCategories(categories: string[]) {
   }
 }
 
+/** 种子提示词默认文件夹名称 */
+export const SEED_DEFAULT_FOLDER = "默认内置提示词";
+
+/** 种子提示词原始分类 → 顶层分类映射（角色设定归入收藏） */
+export const SEED_CATEGORY_MAP: Record<string, string> = {
+  "角色设定": "收藏",
+  "产品精修": "产品精修",
+  "品牌设计": "品牌设计",
+  "视频生成": "视频生成"
+};
+
+export async function ensureSeedFolders() {
+  const existingFolders = await storageGet<PromptFolder[]>(PROMPT_STORAGE_KEYS.folders, []);
+  let changed = false;
+
+  const scopes = [...new Set(Object.values(SEED_CATEGORY_MAP))];
+
+  for (const scope of scopes) {
+    const exists = existingFolders.some(
+      (f) => f.scope === scope && f.name === SEED_DEFAULT_FOLDER
+    );
+    if (!exists) {
+      const scopeFolders = existingFolders.filter((f) => f.scope === scope);
+      const nextOrder = scopeFolders.length === 0
+        ? 0
+        : Math.max(...scopeFolders.map((f) => f.order ?? 0)) + 1;
+      existingFolders.push({
+        id: `seed-default-${scope}-${Date.now()}`,
+        name: SEED_DEFAULT_FOLDER,
+        scope,
+        createdAt: new Date().toISOString(),
+        order: nextOrder
+      });
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await storageSet(PROMPT_STORAGE_KEYS.folders, existingFolders);
+  }
+}
+
+/** 清理之前版本误创建的错误标签 */
+const INVALID_LEGACY_TABS = ["收藏/产品精修", "收藏/品牌设计", "收藏/视频生成"];
+
+export async function cleanupInvalidTabs() {
+  const tabs = await getCustomTabs();
+  const cleaned = tabs.filter((t) => !INVALID_LEGACY_TABS.includes(t));
+  if (cleaned.length === tabs.length) return;
+
+  await storageSet(CUSTOM_TABS_KEY, cleaned);
+
+  const tabOrder = await storageGet<string[]>(TAB_ORDER_KEY, []);
+  await storageSet(TAB_ORDER_KEY, tabOrder.filter((t) => !INVALID_LEGACY_TABS.includes(t)));
+
+  const deletedTabs = await storageGet<string[]>(DELETED_TABS_KEY, []);
+  await storageSet(DELETED_TABS_KEY, deletedTabs.filter((t) => !INVALID_LEGACY_TABS.includes(t)));
+}
+
+export async function migrateSeedCategories() {
+  const existing = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const seedTargetCategory = new Map<string, string>();
+  for (const seed of SEED_PROMPTS) {
+    const baseCategory = SEED_CATEGORY_MAP[seed.category] || seed.category;
+    seedTargetCategory.set(seed.id, `${baseCategory}/${SEED_DEFAULT_FOLDER}`);
+  }
+
+  let changed = false;
+  const migrated = existing.map((r) => {
+    const target = seedTargetCategory.get(r.id);
+    if (!target || r.category === target) return r;
+    changed = true;
+    return { ...r, category: target, updatedAt: new Date().toISOString() };
+  });
+
+  if (changed) {
+    await storageSet(PROMPT_STORAGE_KEYS.favorites, migrated);
+  }
+
+  return { records: migrated, changed };
+}
+
 // --- 提示词排序 ---
 
 async function reorderFavorites(scope: string, orderedIds: string[]) {
@@ -426,6 +509,53 @@ export async function moveFavoriteDown(recordId: string, scope: string) {
   const orderedIds = scopeRecords.map((r) => r.id);
   [orderedIds[idx], orderedIds[idx + 1]] = [orderedIds[idx + 1], orderedIds[idx]];
   return reorderFavorites(scope, orderedIds);
+}
+
+// --- 默认角色预设 ---
+
+export const SEED_ROLE_PRESET = `{
+  "# 角色": "全能AI绘画提示词创意专家",
+  "## 简介": "你是一个专业的AI图像生成提示词（Prompt）大师。你擅长精准捕捉用户的简单需求，将其迅速转化为结构严谨、细节丰富、高质量的专业画面描述。无论是人物、风景、建筑、二次元、产品摄影还是抽象艺术，你都能游刃有余。",
+  "## 工作流": [
+    "1. 意图分析：理解用户输入的简单描述，提取核心关键词（主体、风格、情绪等）。",
+    "2. 细节扩写：使用专业视觉语言，自动补充缺失的画面细节。",
+    "3. 结构化组装：严格按照【提示词公式】将细节组装成流畅的描述。",
+    "4. 多样输出：基于用户需求，提供2-3个不同视角或微调风格的提示词选项。"
+  ],
+  "## 提示词公式": "主体描述（外貌/动作/服饰） + 环境背景 + 光影氛围（如：丁达尔光/赛博朋克光/自然光） + 摄影/镜头语言（如：特写/广角/微距/电影质感） + 艺术风格（如：写实/插画/3D/水彩） + 画质与渲染参数（如：8k, masterpiece, best quality, unreal engine 5, highly detailed）",
+  "## 限制条件": [
+    "不要解释过程，拒绝回答与AI图像生成无关的内容",
+    "直接输出最终的提示词结果，方便用户复制",
+    "必须包含【中文画面解析】和【纯英文提示词】（因为主流AI绘画工具对英文识别更好）",
+    "英文提示词之间统一用英文半角逗号 ',' 分隔",
+    "避免在提示词中使用否定词（如不要xx、没有xx），只描述画面中应该存在的事物"
+  ],
+  "## 示例格式": {
+    "说明": "当用户输入简单需求（如：帮我画一个赛博朋克风格的女孩），严格按照以下格式直接输出：",
+    "输出模板": {
+      "选项1：【侧重人物特写】": {
+        "中文画面": "赛博朋克风格，特写镜头。一个年轻女孩的精致面部特写，霓虹灯光映照在她的脸上，眼睛里有机械发光的瞳孔，背景是模糊的未来城市夜景。电影级光影，极高画质。",
+        "英文Prompt": "Cyberpunk style, close-up shot, delicate facial portrait of a young girl, glowing mechanical pupils, neon lights reflecting on her face, blurred futuristic city night background, cinematic lighting, masterpiece, 8k resolution, highly detailed, photorealistic."
+      },
+      "选项2：【侧重全身与环境】": {
+        "中文画面": "赛博朋克风格，全身广角镜头。一个酷炫的女孩站在下雨的未来城市街道上，穿着高科技发光夹克，手中拿着一把发光的透明伞。地面积水反射着绚丽的霓虹灯，赛博朋克氛围，超高分辨率。",
+        "英文Prompt": "Cyberpunk style, full body shot, wide angle, a cool girl standing on a rainy futuristic city street, wearing a high-tech glowing jacket, holding a glowing transparent umbrella, ground puddles reflecting brilliant neon lights, cyberpunk atmosphere, unreal engine 5 render, ray tracing, masterpiece, best quality."
+      }
+    }
+  }
+}`;
+
+export async function ensureDefaultRolePreset() {
+  const workspace = await storageGet<{ rolePreset: string; rolePresetLocked: boolean; userRequirement: string }>(
+    PROMPT_STORAGE_KEYS.workspace,
+    { rolePreset: "", rolePresetLocked: false, userRequirement: "" }
+  );
+  if (!workspace.rolePreset.trim()) {
+    await storageSet(PROMPT_STORAGE_KEYS.workspace, {
+      ...workspace,
+      rolePreset: SEED_ROLE_PRESET
+    });
+  }
 }
 
 export async function pinFavoriteToTop(recordId: string, scope: string) {

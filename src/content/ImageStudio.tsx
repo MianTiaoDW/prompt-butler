@@ -26,9 +26,8 @@ import type { ExtensionSettings } from "../types/settings";
 import { IMAGE_ASPECT_RATIOS, IMAGE_COUNTS, IMAGE_RESOLUTIONS } from "../types/settings";
 
 const selectClassName = [
-  "appearance-none w-full rounded-2xl border border-white/10 bg-black/25 pl-4 pr-10 py-3",
-  "text-sm text-white outline-none transition cursor-pointer",
-  "focus:border-accent/40 hover:border-white/20"
+  "form-field appearance-none w-full pl-4 pr-10 py-3",
+  "cursor-pointer hover:border-accent/30"
 ].join(" ");
 
 async function copyImageToClipboard(imageUrl: string) {
@@ -57,7 +56,6 @@ export function ImageStudio(props: {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [panelMessage, setPanelMessage] = useState("编辑提示词或从角色设定页自动带入");
   const [generationResult, setGenerationResult] = useState<ImageGenerationResult | null>(null);
   const [previewImage, setPreviewImage] = useState<GeneratedImageAsset | null>(null);
   const [imageHistory, setImageHistory] = useState<ImageHistoryEntry[]>([]);
@@ -77,15 +75,9 @@ export function ImageStudio(props: {
     void getImageTask().then((task) => {
       if (task.status === "running") {
         setIsGenerating(true);
-        setPanelMessage("正在调用生图模型生成图片...");
       } else if (task.status === "done" && task.result) {
         setGenerationResult(task.result);
         setIsGenerating(false);
-        setPanelMessage(
-          task.result.ok
-            ? `已生成 ${task.result.images.length} 张图片，当前使用模型：${task.result.model}`
-            : `生图失败：${task.result.message}`
-        );
         void clearImageTask();
       }
     });
@@ -94,7 +86,6 @@ export function ImageStudio(props: {
   const handleGenerate = async () => {
     if (isGenerating) return;
     setIsGenerating(true);
-    setPanelMessage("正在调用生图模型生成图片...");
     setGenerationResult(null);
     await startImageTask();
 
@@ -140,17 +131,9 @@ export function ImageStudio(props: {
         }));
         const updatedHistory = await addImageHistoryEntries(historyEntries);
         setImageHistory(updatedHistory);
-        setPanelMessage(
-          `已生成 ${result.images.length} 张图片，当前使用模型：${result.model}`
-        );
-      } else {
-        setPanelMessage(`生图失败：${result.message}`);
       }
     } catch (error) {
       await clearImageTask();
-      setPanelMessage(
-        error instanceof Error ? `生图失败：${error.message}` : "生图失败。"
-      );
     } finally {
       setIsGenerating(false);
     }
@@ -163,7 +146,6 @@ export function ImageStudio(props: {
       // 取消消息本身失败不影响 UI 重置
     }
     setIsGenerating(false);
-    setPanelMessage("已取消生图。");
     await clearImageTask();
   };
 
@@ -192,10 +174,10 @@ export function ImageStudio(props: {
 
   return (
     <div className="space-y-4">
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
+      <section className="glass-card p-4">
         <div>
-          <div className="text-sm font-medium text-white/88">图像生成区</div>
-          <div className="mt-1 text-xs text-white/45">
+          <div className="section-label">图像生成区</div>
+          <div className="section-hint">
             可接收角色设定页自动带入的提示词
           </div>
         </div>
@@ -271,7 +253,7 @@ export function ImageStudio(props: {
             });
           }}
           placeholder="输入用于生图的最终提示词，或先在角色设定页生成后自动带入。"
-          className="mt-4 min-h-[120px] w-full rounded-3xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white outline-none transition placeholder:text-white/25"
+          className="form-field mt-4 min-h-[120px] w-full resize-y leading-6"
         />
 
         <div className="mt-4 flex flex-wrap gap-3">
@@ -281,7 +263,7 @@ export function ImageStudio(props: {
               void handleGenerate();
             }}
             disabled={!canGenerate || isGenerating}
-            className="inline-flex items-center gap-2 rounded-2xl border border-accent/35 bg-accent/12 px-4 py-3 text-sm text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-45"
+            className="gradient-button"
           >
             {isGenerating ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -297,7 +279,7 @@ export function ImageStudio(props: {
               onClick={() => {
                 void handleCancel();
               }}
-              className="inline-flex items-center gap-2 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-300 transition hover:bg-rose-400/20"
+              className="ghost-button border-rose-400/30 bg-rose-400/10 text-rose-300 hover:text-rose-200"
             >
               <X className="h-4 w-4" />
               取消生图
@@ -313,7 +295,7 @@ export function ImageStudio(props: {
                 );
               }}
               disabled={isDownloadingAll}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/72 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+              className="ghost-button"
             >
               <Download className="h-4 w-4" />
               {isDownloadingAll ? "下载中..." : "一键下载所有图片"}
@@ -321,16 +303,19 @@ export function ImageStudio(props: {
           ) : null}
         </div>
 
-        <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-6 text-white/58">
-          {isServiceReady
-            ? panelMessage
-            : "请先在配置中心完成连接配置"}
-        </div>
+        {!isServiceReady ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white/58">
+            请先在配置中心完成连接配置
+          </div>
+        ) : null}
+        <p className="mt-3 text-xs text-white/30">
+          编辑提示词或从角色设定页自动带入
+        </p>
       </section>
 
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
-        <div className="text-sm font-medium text-white/88">生成结果</div>
-        <div className="mt-1 text-xs text-white/45">
+      <section className="glass-card p-4">
+        <div className="section-label">生成结果</div>
+        <div className="section-hint">
           点击图片预览，支持单张或批量下载
         </div>
 
@@ -339,14 +324,14 @@ export function ImageStudio(props: {
             {Array.from({ length: Math.max(2, settings.imageCount) }).map((_, index) => (
               <div
                 key={`skeleton-${index + 1}`}
-                className="aspect-square animate-pulse rounded-3xl border border-white/10 bg-white/5"
+                className="aspect-square animate-pulse rounded-[1.35rem] border border-white/10 bg-white/[0.07]"
               />
             ))}
           </div>
         ) : null}
 
         {generationResult && !generationResult.ok ? (
-          <div className="mt-4 rounded-3xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-sm text-rose-200">
+          <div className="mt-4 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-sm text-rose-200">
             {generationResult.message}
           </div>
         ) : null}
@@ -356,13 +341,13 @@ export function ImageStudio(props: {
             {generationResult.images.map((image) => (
               <article
                 key={image.id}
-                className="overflow-hidden rounded-3xl border border-white/10 bg-black/20"
+                className="media-card"
               >
                 <div className="group relative cursor-pointer">
                   <img
                     src={image.url}
                     alt="Generated prompt art"
-                    className="aspect-square w-full object-cover"
+                    className="aspect-square w-full object-cover transition duration-300 group-hover:scale-[1.025]"
                     onClick={() => {
                       setPreviewImage(image);
                     }}
@@ -374,7 +359,7 @@ export function ImageStudio(props: {
                       void handleDownload([image.url], image.id);
                     }}
                     disabled={downloadingId === image.id}
-                    className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-xl border border-white/10 bg-black/55 px-3 py-2 text-xs text-white/80 backdrop-blur transition hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-xl border border-white/10 bg-black/55 px-3 py-2 text-xs text-white/85 shadow-[0_10px_26px_rgba(0,0,0,0.32)] backdrop-blur transition hover:border-accent/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Download className="h-3.5 w-3.5" />
                     {downloadingId === image.id ? "下载中" : "下载"}
@@ -391,13 +376,13 @@ export function ImageStudio(props: {
         ) : null}
 
         {!isGenerating && !generationResult ? (
-          <div className="mt-4 rounded-3xl border border-dashed border-white/10 px-4 py-8 text-sm leading-6 text-white/45">
+          <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-8 text-sm leading-6 text-white/45">
             生成完成后在此展示图片网格
           </div>
         ) : null}
       </section>
 
-      <section className="glass-panel rounded-3xl border border-white/5 p-4">
+      <section className="glass-card p-4">
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
@@ -424,7 +409,7 @@ export function ImageStudio(props: {
                 await clearImageHistory();
                 setImageHistory([]);
               }}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/50 transition hover:text-rose-300"
+              className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-white/55 transition hover:border-rose-400/30 hover:text-rose-300"
             >
               清空记录
             </button>
@@ -433,7 +418,7 @@ export function ImageStudio(props: {
 
         {showHistory ? (
           imageHistory.length === 0 ? (
-            <div className="mt-3 rounded-2xl border border-dashed border-white/10 px-4 py-6 text-xs leading-5 text-white/40">
+            <div className="mt-3 rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-6 text-xs leading-5 text-white/40">
               暂无历史记录，生成图片后会自动保存在这里。
             </div>
           ) : (
@@ -441,7 +426,7 @@ export function ImageStudio(props: {
               {imageHistory.slice(0, 20).map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 p-2"
+                  className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/25 p-2"
                 >
                   <img
                     src={entry.url}
@@ -465,7 +450,7 @@ export function ImageStudio(props: {
                     onClick={() => {
                       void handleDownload([entry.url], entry.id);
                     }}
-                    className="shrink-0 rounded-xl border border-white/10 bg-white/5 p-2 text-white/50 transition hover:text-white"
+                    className="shrink-0 rounded-xl border border-white/10 bg-white/[0.06] p-2 text-white/50 transition hover:border-accent/30 hover:text-white"
                   >
                     <Download className="h-3.5 w-3.5" />
                   </button>
@@ -483,7 +468,7 @@ export function ImageStudio(props: {
 
       {previewImage ? (
         <div
-          className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/85 backdrop-blur-sm"
+          className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/85 backdrop-blur-md"
           onClick={() => {
             setPreviewImage(null);
           }}
@@ -497,7 +482,7 @@ export function ImageStudio(props: {
             <img
               src={previewImage.url}
               alt="Preview"
-              className="max-h-[85vh] max-w-[85vw] rounded-3xl object-contain"
+              className="max-h-[85vh] max-w-[85vw] rounded-[1.35rem] object-contain shadow-[0_28px_80px_rgba(0,0,0,0.55)]"
             />
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3">
               <button
@@ -505,7 +490,7 @@ export function ImageStudio(props: {
                 onClick={() => {
                   void copyImageToClipboard(previewImage.url);
                 }}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 text-sm text-white/85 backdrop-blur transition hover:bg-black/80 hover:text-white"
+                className="ghost-button border-white/20 bg-black/60 px-5 py-3 text-sm text-white/85 backdrop-blur hover:bg-black/80"
               >
                 <Copy className="h-4 w-4" />
                 复制
@@ -515,7 +500,7 @@ export function ImageStudio(props: {
                 onClick={() => {
                   void handleDownload([previewImage.url], previewImage.id);
                 }}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 text-sm text-white/85 backdrop-blur transition hover:bg-black/80 hover:text-white"
+                className="gradient-button px-5 py-3 text-sm"
               >
                 <Download className="h-4 w-4" />
                 下载
@@ -526,7 +511,7 @@ export function ImageStudio(props: {
               onClick={() => {
                 setPreviewImage(null);
               }}
-              className="absolute right-4 top-4 rounded-full border border-white/20 bg-black/60 p-2 text-white/70 backdrop-blur transition hover:text-white"
+              className="absolute right-4 top-4 rounded-full border border-white/20 bg-black/60 p-2 text-white/70 backdrop-blur transition hover:border-accent/35 hover:text-white"
             >
               <X className="h-5 w-5" />
             </button>

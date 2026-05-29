@@ -188,25 +188,25 @@ export function OptionsApp() {
   };
 
   return (
-    <main className="min-h-screen bg-accent-radial px-6 py-10 text-white">
+    <main className="aurora-bg min-h-screen px-6 py-10 text-white">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="mx-auto flex w-full max-w-6xl flex-col gap-6"
       >
-        <section className="glass-panel accent-ring rounded-[2rem] px-8 py-10">
+        <section className="aurora-shell rounded-[1.75rem] px-8 py-10">
           <div className="max-w-3xl">
-            <div className="text-5xl font-extrabold uppercase tracking-[0.08em] text-accent/80">
+            <div className="bg-gradient-to-r from-accent to-accent-soft bg-clip-text text-4xl font-semibold tracking-[0.02em] text-transparent md:text-5xl">
               CYGJ模型配置中心
             </div>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-white/65">
               这里进行模型配置，输入模型服务商的API Key,然后依次输入/选择要配置的推理模型，视觉模型，生图模型
             </p>
             <div className="mt-6 flex flex-wrap gap-3 text-sm">
-              <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white/70">
+              <div className="rounded-full border border-white/10 bg-white/[0.07] px-4 py-2 text-white/70">
                 状态：{statusText}
               </div>
-              <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white/70">
+              <div className="rounded-full border border-white/10 bg-white/[0.07] px-4 py-2 text-white/70">
                 最近同步：{formatSavedTime(lastSyncedAt)}
               </div>
             </div>
@@ -220,9 +220,9 @@ export function OptionsApp() {
             return (
               <article
                 key={card.title}
-                className="glass-panel rounded-[1.75rem] p-6"
+                className="glass-card p-6"
               >
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/14 text-accent">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-950">
                   <Icon className="h-5 w-5" />
                 </div>
                 <h2 className="mt-5 text-xl font-medium text-white">{card.title}</h2>
@@ -233,7 +233,7 @@ export function OptionsApp() {
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.6fr_0.9fr]">
-          <article className="glass-panel rounded-[2rem] p-7">
+          <article className="glass-card p-7">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-xs uppercase tracking-[0.26em] text-white/40">
@@ -256,7 +256,7 @@ export function OptionsApp() {
                     onChange={(event) => {
                       handleProviderChange(event.target.value as ExtensionSettings["provider"]);
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     {providerOptions.map((option) => (
                       <option key={option.id} value={option.id} className="bg-slate-950 text-white">
@@ -280,7 +280,7 @@ export function OptionsApp() {
                     }));
                   }}
                   placeholder="输入当前服务商的 API Key"
-                  className="w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-accent/40"
+                  className="form-field w-full"
                 />
               </label>
 
@@ -296,7 +296,7 @@ export function OptionsApp() {
                     }));
                   }}
                   placeholder="输入或覆盖默认 Base URL"
-                  className="w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-accent/40"
+                  className="form-field w-full"
                 />
               </label>
 
@@ -311,7 +311,7 @@ export function OptionsApp() {
                         reasoningModel: event.target.value
                       }));
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     <option value="" className="bg-slate-950 text-white">
                       请选择推理模型
@@ -340,7 +340,7 @@ export function OptionsApp() {
                     }));
                   }}
                   placeholder="也可手动输入推理模型 ID"
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/15 px-4 py-2.5 text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent/40"
+                  className="form-field mt-2 w-full py-2.5 text-xs"
                 />
               </label>
 
@@ -355,7 +355,7 @@ export function OptionsApp() {
                         visionModel: event.target.value
                       }));
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     <option value="" className="bg-slate-950 text-white">
                       请选择视觉模型
@@ -384,7 +384,7 @@ export function OptionsApp() {
                     }));
                   }}
                   placeholder="也可手动输入视觉模型 ID"
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/15 px-4 py-2.5 text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent/40"
+                  className="form-field mt-2 w-full py-2.5 text-xs"
                 />
               </label>
 
@@ -399,7 +399,7 @@ export function OptionsApp() {
                         imageModel: event.target.value
                       }));
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     <option value="" className="bg-slate-950 text-white">
                       请选择生图模型
@@ -428,7 +428,7 @@ export function OptionsApp() {
                     }));
                   }}
                   placeholder="也可手动输入生图模型 ID"
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/15 px-4 py-2.5 text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent/40"
+                  className="form-field mt-2 w-full py-2.5 text-xs"
                 />
               </label>
 
@@ -443,7 +443,7 @@ export function OptionsApp() {
                         imageAspectRatio: event.target.value as ExtensionSettings["imageAspectRatio"]
                       }));
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     {IMAGE_ASPECT_RATIOS.map((ratio) => (
                       <option key={ratio} value={ratio} className="bg-slate-950 text-white">
@@ -466,7 +466,7 @@ export function OptionsApp() {
                         imageResolution: event.target.value as ExtensionSettings["imageResolution"]
                       }));
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     {IMAGE_RESOLUTIONS.map((resolution) => (
                       <option key={resolution} value={resolution} className="bg-slate-950 text-white">
@@ -489,7 +489,7 @@ export function OptionsApp() {
                         imageCount: Number(event.target.value) as ExtensionSettings["imageCount"]
                       }));
                     }}
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-black/25 py-3 pl-4 pr-10 text-sm text-white outline-none transition focus:border-accent/40 cursor-pointer"
+                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
                   >
                     {IMAGE_COUNTS.map((count) => (
                       <option key={count} value={count} className="bg-slate-950 text-white">
@@ -508,7 +508,7 @@ export function OptionsApp() {
                 onClick={() => {
                   void handleSave();
                 }}
-                className="rounded-2xl border border-accent/35 bg-accent/12 px-4 py-3 text-sm text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-50"
+                className="gradient-button disabled:opacity-50"
                 disabled={!isDirty}
               >
                 保存配置
@@ -516,7 +516,7 @@ export function OptionsApp() {
               <button
                 type="button"
                 onClick={handleReset}
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="ghost-button disabled:opacity-50"
                 disabled={!isDirty}
               >
                 恢复已保存
@@ -526,7 +526,7 @@ export function OptionsApp() {
                 onClick={() => {
                   void handleTestConnection();
                 }}
-                className="rounded-2xl border border-accent/35 bg-accent/12 px-4 py-3 text-sm text-accent transition hover:bg-accent/18 disabled:cursor-not-allowed disabled:opacity-45"
+                className="gradient-button disabled:opacity-45"
                 disabled={isTestingConnection || !hasDraftConnectionCredentials}
               >
                 {isTestingConnection ? "测试中..." : "测试连接"}
@@ -536,7 +536,7 @@ export function OptionsApp() {
                 onClick={() => {
                   void handleDetectModels();
                 }}
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                className="ghost-button disabled:opacity-45"
                 disabled={isDetectingModels || !hasDraftConnectionCredentials}
               >
                 {isDetectingModels ? "识别中..." : "自动识别模型"}
@@ -547,7 +547,7 @@ export function OptionsApp() {
                   void setConnectionStatus("error");
                   setPanelMessage("已将已保存配置标记为测试失败，悬浮窗状态会同步熄灭。");
                 }}
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 transition hover:border-white/20 hover:text-white"
+                className="ghost-button"
               >
                 标记为测试失败
               </button>
@@ -563,9 +563,9 @@ export function OptionsApp() {
           </article>
 
           <aside className="space-y-6">
-            <article className="glass-panel rounded-[2rem] p-6">
+            <article className="glass-card p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/14 text-accent">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-950">
                   <DatabaseZap className="h-5 w-5" />
                 </div>
                 <div>
@@ -615,9 +615,9 @@ export function OptionsApp() {
               </div>
             </article>
 
-            <article className="glass-panel rounded-[2rem] p-6">
+            <article className="glass-card p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/14 text-accent">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-950">
                   <CheckCircle2 className="h-5 w-5" />
                 </div>
                 <div>
