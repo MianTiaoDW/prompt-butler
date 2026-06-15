@@ -33,12 +33,99 @@
 }
 
 @layer components {
+  /* ---- 基础面板 ---- */
   .glass-panel {
-    @apply border border-white/10 bg-white/10 shadow-glass backdrop-blur-2xl;
+    @apply border shadow-glass backdrop-blur-2xl;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-card {
+    @apply rounded-[1.35rem] border shadow-glass backdrop-blur-2xl;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  .media-card {
+    @apply overflow-hidden rounded-[1.35rem] border;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  .aurora-shell {
+    @apply rounded-[1.35rem] border shadow-glass backdrop-blur-2xl;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(1, 10, 24, 0.95);
+  }
+
+  /* ---- 表单 ---- */
+  .form-field {
+    @apply w-full rounded-2xl border px-4 py-3 text-sm outline-none transition;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(0, 0, 0, 0.25);
+    color: #ffffff;
+  }
+
+  .form-field::placeholder {
+    color: rgba(255, 255, 255, 0.25);
+  }
+
+  .form-field:focus {
+    border-color: rgba(0, 255, 132, 0.4);
+  }
+
+  /* ---- 按钮 ---- */
+  .gradient-button {
+    @apply inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm transition disabled:cursor-not-allowed;
+    border-color: rgba(0, 255, 132, 0.35);
+    background-color: rgba(0, 255, 132, 0.12);
+    color: #00ff84;
+  }
+
+  .gradient-button:hover:not(:disabled) {
+    background-color: rgba(0, 255, 132, 0.18);
+  }
+
+  .gradient-button:disabled {
+    opacity: 0.45;
+  }
+
+  .ghost-button {
+    @apply inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-45;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .ghost-button:hover:not(:disabled) {
+    color: #ffffff;
+  }
+
+  .icon-button {
+    @apply rounded-2xl border p-3 transition;
+    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .icon-button:hover {
+    border-color: rgba(0, 255, 132, 0.4);
+    color: #00ff84;
+  }
+
+  /* ---- 文本 ---- */
+  .section-label {
+    @apply text-sm font-medium;
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  .section-hint {
+    @apply mt-1 text-xs;
+    color: rgba(255, 255, 255, 0.45);
   }
 
   .accent-ring {
-    @apply ring-1 ring-accent/30 shadow-neon;
+    @apply shadow-neon;
   }
 
   .no-scrollbar {

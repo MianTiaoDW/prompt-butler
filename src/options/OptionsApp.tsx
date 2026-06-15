@@ -222,7 +222,7 @@ export function OptionsApp() {
                 key={card.title}
                 className="glass-card p-6"
               >
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-950">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-900">
                   <Icon className="h-5 w-5" />
                 </div>
                 <h2 className="mt-5 text-xl font-medium text-white">{card.title}</h2>
@@ -565,7 +565,7 @@ export function OptionsApp() {
           <aside className="space-y-6">
             <article className="glass-card p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-950">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-900">
                   <DatabaseZap className="h-5 w-5" />
                 </div>
                 <div>
@@ -617,7 +617,7 @@ export function OptionsApp() {
 
             <article className="glass-card p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-950">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-900">
                   <CheckCircle2 className="h-5 w-5" />
                 </div>
                 <div>
