@@ -61,7 +61,9 @@ export interface ProviderPreset {
 export interface ExtensionSettings {
   provider: ProviderId;
   apiKey: string;
+  imageApiKey: string;
   baseUrl: string;
+  imageBaseUrl: string;
   reasoningModel: string;
   visionModel: string;
   imageModel: string;

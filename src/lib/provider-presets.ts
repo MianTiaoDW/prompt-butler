@@ -209,7 +209,9 @@ export const providerOptions = Object.values(providerPresets).map(({ id, label }
 export const defaultExtensionSettings: ExtensionSettings = {
   provider: "chatgpt",
   apiKey: "",
+  imageApiKey: "",
   baseUrl: providerPresets.chatgpt.defaultBaseUrl,
+  imageBaseUrl: "",
   reasoningModel: providerPresets.chatgpt.defaultModels.reasoning,
   visionModel: providerPresets.chatgpt.defaultModels.vision,
   imageModel: providerPresets.chatgpt.defaultModels.image,
@@ -235,7 +237,9 @@ export function buildSettingsFromProvider(
   return {
     provider: providerId,
     apiKey: previous?.apiKey ?? "",
+    imageApiKey: previous?.imageApiKey ?? "",
     baseUrl: preset.defaultBaseUrl,
+    imageBaseUrl: previous?.imageBaseUrl ?? "",
     reasoningModel: preset.defaultModels.reasoning,
     visionModel: preset.defaultModels.vision,
     imageModel: preset.defaultModels.image,
@@ -253,11 +257,29 @@ export function hasConnectionCredentials(settings: ExtensionSettings) {
   return Boolean(settings.apiKey.trim() && settings.baseUrl.trim());
 }
 
+export function getImageConnectionSettings(settings: ExtensionSettings) {
+  const imageApiKey = settings.imageApiKey?.trim() ?? "";
+  const imageBaseUrl = settings.imageBaseUrl?.trim() ?? "";
+
+  return {
+    apiKey: imageApiKey || settings.apiKey.trim(),
+    baseUrl: imageBaseUrl || settings.baseUrl.trim(),
+    channel: imageApiKey ? "dedicated" as const : "shared" as const
+  };
+}
+
+export function hasImageConnectionCredentials(settings: ExtensionSettings) {
+  const imageConnection = getImageConnectionSettings(settings);
+  return Boolean(imageConnection.apiKey && imageConnection.baseUrl);
+}
+
 export function isSettingsConfigured(settings: ExtensionSettings) {
   return Boolean(
     hasConnectionCredentials(settings) &&
+      hasImageConnectionCredentials(settings) &&
       settings.reasoningModel.trim() &&
-      settings.visionModel.trim()
+      settings.visionModel.trim() &&
+      settings.imageModel.trim()
   );
 }
 

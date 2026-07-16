@@ -5,7 +5,7 @@ export default defineManifest({
   name: "提示词生成管家",
   description: "用于生成、管理与复用高质量提示词的高级浏览器插件。",
   version: "1.0.3",
-  permissions: ["storage", "activeTab", "scripting", "downloads", "tabs"],
+  permissions: ["storage", "downloads", "activeTab", "scripting"],
   host_permissions: ["<all_urls>"],
   icons: {
     "16": "icons/icon16.png",

@@ -19,6 +19,7 @@ import {
 
 import { useChromeStorage } from "../hooks/useChromeStorage";
 import { storageGet } from "../lib/storage";
+import { saveImageWorkspace } from "../lib/image-library";
 import {
   createPromptFolder,
   deletePromptFolder,
@@ -29,6 +30,7 @@ import {
   PROMPT_STORAGE_KEYS,
   recommendPromptTags,
   renamePromptFolder,
+  rememberDeletedPrompt,
   reorderPromptFolders,
   searchPromptRecords,
   updateFavoritePrompt,
@@ -48,6 +50,9 @@ import type {
 } from "../types/prompt";
 import type { PromptFolder } from "../types/prompt";
 import type { ExtensionSettings } from "../types/settings";
+import { PromptCard } from "./PromptCard";
+import { PromptPreviewModal } from "./PromptPreviewModal";
+import { PromptOptimizePanel } from "./PromptOptimizePanel";
 
 function formatTimestamp(timestamp: string) {
   return new Date(timestamp).toLocaleString("zh-CN", {
@@ -63,8 +68,12 @@ export function FavoritesStudio(props: {
   isServiceReady: boolean;
   activeCategory?: string;
   searchQuery?: string;
+  onOpenImageStudio: () => void;
+  assetFilter?: "all" | "favorite" | "folders";
+  openPromptRequest?: { id: string; token: number } | null;
+  onPreviewChange?: (promptId: string | null) => void;
 }) {
-  const { settings, isServiceReady, activeCategory = "收藏", searchQuery = "" } = props;
+  const { settings, isServiceReady, activeCategory = "收藏", searchQuery = "", onOpenImageStudio, assetFilter = "all", openPromptRequest, onPreviewChange } = props;
   const isCollectionCategory = activeCategory === "收藏";
   const favoritesStorage = useChromeStorage<SavedPromptRecord[]>(
     PROMPT_STORAGE_KEYS.favorites,
@@ -90,6 +99,8 @@ export function FavoritesStudio(props: {
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isImportingSeed, setIsImportingSeed] = useState(false);
+  const [previewRecord, setPreviewRecord] = useState<SavedPromptRecord | null>(null);
+  const [optimizationRecord, setOptimizationRecord] = useState<SavedPromptRecord | null>(null);
 
   const handleImportSeeds = async () => {
     setIsImportingSeed(true);
@@ -97,7 +108,7 @@ export function FavoritesStudio(props: {
       // 将种子提示词归入各分类下的"默认内置提示词"文件夹
       const remapped = SEED_PROMPTS.map((p) => {
         const baseCategory = SEED_CATEGORY_MAP[p.category] || p.category;
-        return { ...p, category: `${baseCategory}/${SEED_DEFAULT_FOLDER}` };
+        return { ...p, source: "system-template" as const, category: `${baseCategory}/${SEED_DEFAULT_FOLDER}` };
       });
       const cats = [...new Set(remapped.map((p) => p.category.split("/")[0]))];
       await ensureSeedCategories(cats);
@@ -106,7 +117,7 @@ export function FavoritesStudio(props: {
       const count = await importSeedPrompts(remapped);
       const latest = migratedChanged ? migratedRecords : await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
       await setFavorites(latest);
-      showToast(`已加载 ${latest.length} 条提示词（含内置库）`);
+      setPanelMessage(`已加载 ${latest.length} 条提示词（含内置库）`);
     } finally {
       setIsImportingSeed(false);
     }
@@ -121,12 +132,12 @@ export function FavoritesStudio(props: {
   const scopedFolders = useMemo(
     () =>
       folders
-        .filter((folder) => (folder.scope || "收藏") === activeCategory)
+        .filter((folder) => assetFilter === "folders" || activeCategory === "收藏" ? true : (folder.scope || "收藏") === activeCategory)
         .sort((left, right) => (left.order ?? 0) - (right.order ?? 0)),
-    [activeCategory, folders]
+    [activeCategory, assetFilter, folders]
   );
   const activeFolder = scopedFolders.find((folder) => folder.id === selectedFolderId) ?? null;
-  const scopedCategoryName = activeFolder ? `${activeCategory}/${activeFolder.name}` : activeCategory;
+  const scopedCategoryName = activeFolder ? `${activeFolder.scope || "收藏"}/${activeFolder.name}` : activeCategory;
   const categoryPromptCount = useMemo(
     () =>
       favorites.filter(
@@ -146,6 +157,20 @@ export function FavoritesStudio(props: {
     if (orderDiff !== 0) return orderDiff;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
+  const seedIds = useMemo(() => new Set(SEED_PROMPTS.map((prompt) => prompt.id)), []);
+  const categoryAssetRecords = useMemo(() => {
+    const categoryRecords = activeCategory === "收藏"
+      ? favorites
+      : favorites.filter((record) => record.category === activeCategory || record.category.startsWith(`${activeCategory}/`));
+    const filteredRecords = assetFilter === "favorite"
+      ? categoryRecords.filter((record) => record.isFavorite ?? !seedIds.has(record.id))
+      : categoryRecords;
+    return searchPromptRecords(filteredRecords, searchQuery).sort(
+      (left, right) =>
+        new Date(right.updatedAt ?? right.createdAt).getTime() -
+        new Date(left.updatedAt ?? left.createdAt).getTime()
+    );
+  }, [activeCategory, assetFilter, favorites, searchQuery, seedIds]);
 
   useEffect(() => {
     if (!copiedId) {
@@ -167,9 +192,87 @@ export function FavoritesStudio(props: {
     try {
       await navigator.clipboard.writeText(record.content);
       setCopiedId(record.id);
+      showToast("提示词已复制");
+      void markRecordUsed(record);
     } catch {
       setPanelMessage("当前页面不允许直接写入剪贴板，请手动复制。");
     }
+  };
+
+  const markRecordUsed = async (record: SavedPromptRecord) => {
+    const lastUsedAt = new Date().toISOString();
+    const updated = await updateFavoritePrompt(record.id, {
+      lastUsedAt,
+      lastUsed: lastUsedAt,
+      usedCount: (record.usedCount ?? record.usageCount ?? 0) + 1,
+      usageCount: (record.usageCount ?? record.usedCount ?? 0) + 1
+    });
+    if (updated) {
+      await setFavorites((current) =>
+        current.map((item) => (item.id === record.id ? updated : item))
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!openPromptRequest) return;
+    if (favoritesStorage.isLoading) return;
+    const record = favorites.find((item) => item.id === openPromptRequest.id);
+    if (!record) return;
+    setPreviewRecord(record);
+    void markRecordUsed(record);
+  }, [favoritesStorage.isLoading, openPromptRequest?.token]);
+
+  useEffect(() => {
+    onPreviewChange?.(previewRecord?.id ?? null);
+  }, [onPreviewChange, previewRecord?.id]);
+
+  const toggleRecordFavorite = async (record: SavedPromptRecord) => {
+    const currentFavoriteState = record.isFavorite ?? !seedIds.has(record.id);
+    const updated = await updateFavoritePrompt(record.id, { isFavorite: !currentFavoriteState });
+    if (updated) {
+      await setFavorites((current) =>
+        current.map((item) => (item.id === record.id ? updated : item))
+      );
+      setPreviewRecord((current) => current?.id === record.id ? updated : current);
+      showToast(currentFavoriteState ? "已取消收藏" : "已加入收藏");
+    }
+  };
+
+  const usePromptInImageStudio = async (record: SavedPromptRecord) => {
+    await saveImageWorkspace({
+      prompt: record.content,
+      lastUpdatedAt: null,
+      source: {
+        promptId: record.id,
+        title: record.title || record.content.slice(0, 28),
+        type: record.source ?? (record.id.startsWith("seed-") ? "system-template" : "user-created"),
+        format: record.format,
+        provider: record.provider,
+        model: record.model
+      }
+    });
+    await markRecordUsed(record);
+    setPreviewRecord(null);
+    onOpenImageStudio();
+  };
+
+  const savePreviewContent = async (record: SavedPromptRecord, content: string) => {
+    const currentVersion = record.version ?? "1.0";
+    const [major, minor] = currentVersion.split(".").map((value) => Number(value) || 0);
+    const updated = await updateFavoritePrompt(record.id, {
+      content,
+      tags: recommendPromptTags(content),
+      contentVariants: { ...record.contentVariants, [record.format]: content },
+      version: `${major}.${minor + 1}`,
+      versions: [...(record.versions ?? []), { id: `${record.id}-${Date.now()}`, version: currentVersion, content: record.content, createdAt: new Date().toISOString(), note: "手动编辑" }]
+    });
+    if (!updated) return;
+    await setFavorites((current) =>
+      current.map((item) => (item.id === record.id ? updated : item))
+    );
+    setPreviewRecord(updated);
+    showToast("提示词已更新");
   };
 
   const flushPendingSave = async (recordId: string, content: string) => {
@@ -319,8 +422,10 @@ export function FavoritesStudio(props: {
   };
 
   const handleDeletePrompt = async (record: SavedPromptRecord) => {
+    await rememberDeletedPrompt(record.id);
     await setFavorites((current) => current.filter((item) => item.id !== record.id));
     setPanelMessage("提示词已删除。");
+    showToast("提示词已删除");
   };
 
   const handleExport = async () => {
@@ -390,7 +495,7 @@ export function FavoritesStudio(props: {
     setTitleDraft("");
   };
 
-  const optimizePrompt = async (record: SavedPromptRecord) => {
+  const optimizePrompt = async (record: SavedPromptRecord, direction?: string) => {
     if (!isServiceReady) {
       setPanelMessage("服务未就绪，请先完成配置并测试连接。");
       return;
@@ -404,7 +509,8 @@ export function FavoritesStudio(props: {
         type: "prompt:optimize",
         payload: {
           settings,
-          content: record.content
+          content: record.content,
+          direction
         }
       });
 
@@ -414,9 +520,23 @@ export function FavoritesStudio(props: {
       }
 
       const tags = recommendPromptTags(result.output);
+      const currentVersion = record.version ?? "1.0";
+      const [major, minor] = currentVersion.split(".").map((value) => Number(value) || 0);
       const updatedRecord = await updateFavoritePrompt(record.id, {
         content: result.output,
-        tags
+        tags,
+        contentVariants: { ...record.contentVariants, [record.format]: result.output },
+        version: `${major}.${minor + 1}`,
+        versions: [
+          ...(record.versions ?? []),
+          {
+            id: `${record.id}-${Date.now()}`,
+            version: currentVersion,
+            content: record.content,
+            createdAt: new Date().toISOString(),
+            note: direction || "AI 优化"
+          }
+        ]
       });
 
       if (!updatedRecord) {
@@ -429,7 +549,10 @@ export function FavoritesStudio(props: {
       );
       setExpandedId(record.id);
       setDraftContent(updatedRecord.content);
+      setPreviewRecord((current) => current?.id === record.id ? updatedRecord : current);
+      setOptimizationRecord(null);
       setPanelMessage(`AI 优化完成，当前使用模型：${result.model}`);
+      showToast(`已生成 ${updatedRecord.version} 版本`);
     } catch (error) {
       setPanelMessage(
         error instanceof Error ? `优化失败：${error.message}` : "优化失败。"
@@ -438,6 +561,38 @@ export function FavoritesStudio(props: {
       setBusyId(null);
     }
   };
+
+  const renderAssetSection = (title: string, records: SavedPromptRecord[], emptyMessage: string) => (
+    <section className="prompt-asset-section">
+      <div className="prompt-asset-section-heading">
+        <h2>{title}</h2>
+        <span>{records.length}</span>
+      </div>
+      {records.length > 0 ? (
+        <div className="prompt-asset-grid">
+          {records.map((record) => (
+            <PromptCard
+              key={record.id}
+              record={record}
+              isCopied={copiedId === record.id}
+              isFavorite={record.isFavorite ?? !seedIds.has(record.id)}
+              isOptimizing={busyId === record.id}
+              onCopy={() => void handleCopy(record)}
+              onOpen={() => {
+                setPreviewRecord(record);
+                void markRecordUsed(record);
+              }}
+              onToggleFavorite={() => void toggleRecordFavorite(record)}
+              onOptimize={() => setOptimizationRecord(record)}
+              onDelete={() => void handleDeletePrompt(record)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="prompt-asset-empty">{emptyMessage}</div>
+      )}
+    </section>
+  );
 
   if (activeFolder) {
     return (
@@ -753,7 +908,55 @@ export function FavoritesStudio(props: {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="prompt-asset-library">
+      {assetFilter === "folders" ? (
+        <section className="prompt-folder-browser">
+          <header>
+            <div><h2>我的收藏夹</h2><span>{scopedFolders.length}</span></div>
+            <div>
+              <button type="button" onClick={() => void handleImport()} title="导入"><Upload className="h-4 w-4" /></button>
+              <button type="button" onClick={() => void handleExport()} title="导出"><Download className="h-4 w-4" /></button>
+              <button type="button" onClick={() => { setIsCreatingFolder(true); setFolderNameDraft(""); }} title="新建收藏夹"><Plus className="h-4 w-4" /></button>
+            </div>
+          </header>
+          {isCreatingFolder ? (
+            <div className="prompt-folder-create-row">
+              <input className="form-field" value={folderNameDraft} onChange={(event) => setFolderNameDraft(event.target.value)} placeholder="收藏夹名称" autoFocus onKeyDown={(event) => { if (event.key === "Enter") void handleCreateFolder(); }} />
+              <button type="button" onClick={() => void handleCreateFolder()} disabled={!folderNameDraft.trim()}><Check className="h-4 w-4" /></button>
+              <button type="button" onClick={() => { setIsCreatingFolder(false); setFolderNameDraft(""); }}><X className="h-4 w-4" /></button>
+            </div>
+          ) : null}
+          <div className="prompt-folder-grid">
+            {scopedFolders.map((folder) => {
+              const folderCategory = `${folder.scope || "收藏"}/${folder.name}`;
+              const folderCount = favorites.filter((record) => record.category === folderCategory).length;
+              const isRenaming = renamingFolderId === folder.id;
+              return (
+                <article key={folder.id}>
+                  {isRenaming ? (
+                    <div className="prompt-folder-create-row"><input className="form-field" value={folderNameDraft} onChange={(event) => setFolderNameDraft(event.target.value)} autoFocus /><button type="button" onClick={() => void handleRenameFolder(folder)}><Check className="h-4 w-4" /></button><button type="button" onClick={() => { setRenamingFolderId(null); setFolderNameDraft(""); }}><X className="h-4 w-4" /></button></div>
+                  ) : (
+                    <><button type="button" className="prompt-folder-open" onClick={() => setSelectedFolderId(folder.id)}><strong>{folder.name}</strong><span>{folder.scope || "收藏"} · {folderCount} 条</span></button><div><button type="button" onClick={() => { setRenamingFolderId(folder.id); setFolderNameDraft(folder.name); }} title="重命名"><PencilLine className="h-3.5 w-3.5" /></button><button type="button" onClick={() => void handleDeleteFolder(folder)} title="删除"><Trash2 className="h-3.5 w-3.5" /></button></div></>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+          {scopedFolders.length === 0 ? <div className="prompt-asset-empty">还没有收藏夹，可以从右上角新建。</div> : null}
+        </section>
+      ) : searchQuery.trim() ? (
+        renderAssetSection("搜索结果", categoryAssetRecords, "没有找到匹配的提示词，换一个关键词试试。")
+      ) : (
+        renderAssetSection(assetFilter === "favorite" ? "收藏" : activeCategory === "收藏" ? "全部提示词" : activeCategory, categoryAssetRecords, assetFilter === "favorite" ? "还没有收藏 Prompt" : "当前筛选下还没有提示词")
+      )}
+
+      {panelMessage ? <p className="library-status-message">{panelMessage}</p> : null}
+
+      <details className="prompt-library-management">
+        <summary>
+          <span>收藏夹</span>
+          <small>{scopedFolders.length}</small>
+        </summary>
       <section className="glass-card p-4">
         <div className="flex items-center gap-3">
           <div className="text-sm font-medium text-white/88">{activeCategory}文件夹</div>
@@ -938,6 +1141,10 @@ export function FavoritesStudio(props: {
         </div>
       </section>
 
+      {panelMessage ? (
+        <p className="library-status-message">{panelMessage}</p>
+      ) : null}
+
       {!isLoading && sortedFavorites.length > 0 ? (
         <section className="space-y-1.5">
           <div className="px-1 mb-2 text-xs text-accent/70">
@@ -1011,6 +1218,25 @@ export function FavoritesStudio(props: {
           })}
         </section>
       ) : null}
+      </details>
+
+      <PromptPreviewModal
+        record={previewRecord}
+        isCopied={Boolean(previewRecord && copiedId === previewRecord.id)}
+        isFavorite={Boolean(previewRecord && (previewRecord.isFavorite ?? !seedIds.has(previewRecord.id)))}
+        onClose={() => setPreviewRecord(null)}
+        onCopy={() => { if (previewRecord) void handleCopy(previewRecord); }}
+        onSave={(content) => { if (previewRecord) void savePreviewContent(previewRecord, content); }}
+        onToggleFavorite={() => { if (previewRecord) void toggleRecordFavorite(previewRecord); }}
+        onUsePrompt={() => { if (previewRecord) void usePromptInImageStudio(previewRecord); }}
+        onOptimize={() => { if (previewRecord) setOptimizationRecord(previewRecord); }}
+      />
+      <PromptOptimizePanel
+        record={optimizationRecord}
+        busy={Boolean(optimizationRecord && busyId === optimizationRecord.id)}
+        onClose={() => { if (!busyId) setOptimizationRecord(null); }}
+        onOptimize={(direction) => { if (optimizationRecord) void optimizePrompt(optimizationRecord, direction); }}
+      />
     </div>
   );
 }

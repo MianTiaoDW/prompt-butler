@@ -3,44 +3,38 @@ import { detectProviderModels } from "./model-discovery";
 import { generatePromptFromProvider } from "./prompt-generator";
 import { optimizePromptWithProvider } from "./prompt-generator";
 import { testProviderConnection } from "./provider-health";
-import { finishImageTask, finishPromptTask } from "../lib/task-broker";
+import { toUserFacingError } from "../lib/error-messages";
+import {
+  finishImageTask,
+  finishPromptTask,
+  markImageTaskGenerating,
+  markPromptTaskGenerating,
+  recoverInterruptedTasks
+} from "../lib/task-broker";
 import { importSeedPrompts, ensureSeedCategories } from "../lib/prompt-library";
 import { SEED_PROMPTS } from "../lib/seed-prompts";
 import type { RuntimeRequestMessage } from "../types/runtime";
+import {
+  sessionStorageGet,
+  sessionStorageSet,
+  storageGet,
+  storageSet,
+  STORAGE_KEYS
+} from "../lib/storage";
+import { defaultExtensionSettings } from "../lib/provider-presets";
+import type { ConnectionStatus } from "../types/settings";
 
 console.log("[Prompt Butler] Service Worker 启动中...");
 
-const APP_WINDOW_PATH = "options.html?view=app";
+const WORKER_SESSION_ID = crypto.randomUUID();
+void recoverInterruptedTasks(WORKER_SESSION_ID);
 
-let appWindowUrlPattern: string;
-try {
-  appWindowUrlPattern = `${chrome.runtime.getURL("options.html")}*`;
-} catch (error) {
-  console.error("[Prompt Butler] 初始化失败：", error);
-  appWindowUrlPattern = "";
-}
-
-async function getExistingAppWindowId() {
-  if (!appWindowUrlPattern) return null;
-
-  const tabs = await chrome.tabs.query({ url: appWindowUrlPattern });
-  const tabWithWindow = tabs.find((tab) => typeof tab.windowId === "number");
-  return tabWithWindow?.windowId ?? null;
-}
-
-async function openOrFocusAppWindow() {
-  const existingWindowId = await getExistingAppWindowId();
-
-  if (existingWindowId !== null) {
-    await chrome.windows.update(existingWindowId, { focused: true });
-    return;
-  }
-
-  await chrome.windows.create({
-    url: APP_WINDOW_PATH,
-    type: "popup",
-    width: 460,
-    height: 760
+async function updateConnectionStatus(connectionStatus: ConnectionStatus) {
+  const current = await storageGet(STORAGE_KEYS.extensionSettings, defaultExtensionSettings);
+  await storageSet(STORAGE_KEYS.extensionSettings, {
+    ...current,
+    connectionStatus,
+    lastValidatedAt: connectionStatus === "success" ? new Date().toISOString() : current.lastValidatedAt
   });
 }
 
@@ -66,8 +60,100 @@ chrome.runtime.onInstalled.addListener(() => {
 // 每次 Service Worker 启动也检查（覆盖已安装但未导入的情况）
 void tryImportSeedPrompts();
 
+const APP_WINDOW_PATH = "options.html?view=app";
+const APP_WINDOW_SESSION_KEY = "prompt-butler-app-window-id";
+const APP_WINDOW_BOUNDS_KEY = "prompt-butler-app-window-bounds";
+const DEFAULT_APP_WINDOW_BOUNDS = { width: 500, height: 820 };
+
+interface AppWindowBounds {
+  left?: number;
+  top?: number;
+  width: number;
+  height: number;
+}
+
+let appWindowId: number | null = null;
+
+async function clearAppWindowId() {
+  appWindowId = null;
+  await sessionStorageSet<number | null>(APP_WINDOW_SESSION_KEY, null);
+}
+
+async function getExistingAppWindow() {
+  const storedWindowId = appWindowId ?? await sessionStorageGet<number | null>(APP_WINDOW_SESSION_KEY, null);
+  if (storedWindowId === null) return null;
+
+  try {
+    const appWindow = await chrome.windows.get(storedWindowId);
+    appWindowId = storedWindowId;
+    return appWindow;
+  } catch {
+    await clearAppWindowId();
+    return null;
+  }
+}
+
+async function openOrFocusAppWindow() {
+  const existingWindow = await getExistingAppWindow();
+  if (existingWindow?.id !== undefined) {
+    if (existingWindow.state === "minimized") {
+      await chrome.windows.update(existingWindow.id, { state: "normal" });
+    }
+    await chrome.windows.update(existingWindow.id, { focused: true });
+    return;
+  }
+
+  const storedBounds = await storageGet<AppWindowBounds>(
+    APP_WINDOW_BOUNDS_KEY,
+    DEFAULT_APP_WINDOW_BOUNDS
+  );
+  const createdWindow = await chrome.windows.create({
+    url: APP_WINDOW_PATH,
+    type: "popup",
+    focused: true,
+    width: storedBounds.width,
+    height: storedBounds.height,
+    ...(Number.isFinite(storedBounds.left) ? { left: storedBounds.left } : {}),
+    ...(Number.isFinite(storedBounds.top) ? { top: storedBounds.top } : {})
+  });
+
+  if (createdWindow?.id !== undefined) {
+    appWindowId = createdWindow.id;
+    await sessionStorageSet(APP_WINDOW_SESSION_KEY, createdWindow.id);
+  }
+}
+
+chrome.windows.onBoundsChanged.addListener((window) => {
+  void (async () => {
+    const knownWindowId = appWindowId ?? await sessionStorageGet<number | null>(APP_WINDOW_SESSION_KEY, null);
+    if (window.id !== knownWindowId || window.state !== "normal") return;
+    if (
+      window.width === undefined ||
+      window.height === undefined ||
+      window.left === undefined ||
+      window.top === undefined
+    ) {
+      return;
+    }
+    await storageSet<AppWindowBounds>(APP_WINDOW_BOUNDS_KEY, {
+      left: window.left,
+      top: window.top,
+      width: window.width,
+      height: window.height
+    });
+  })();
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === appWindowId) {
+    void clearAppWindowId();
+  }
+});
+
 chrome.action.onClicked.addListener(() => {
-  void openOrFocusAppWindow();
+  void openOrFocusAppWindow().catch((error) => {
+    console.error("[Prompt Butler] 无法打开独立工作台窗口：", error);
+  });
 });
 
 chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, sendResponse) => {
@@ -86,11 +172,14 @@ chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, s
       }
 
       if (message.type === "prompt:generate") {
+        await updateConnectionStatus("testing");
+        await markPromptTaskGenerating(WORKER_SESSION_ID);
         const result = await generatePromptFromProvider(
           message.payload.settings,
           message.payload.input
         );
         await finishPromptTask(result);
+        await updateConnectionStatus(result.ok ? "success" : "error");
         sendResponse(result);
         return;
       }
@@ -98,18 +187,29 @@ chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, s
       if (message.type === "prompt:optimize") {
         const result = await optimizePromptWithProvider(
           message.payload.settings,
-          message.payload.content
+          message.payload.content,
+          message.payload.direction
         );
         sendResponse(result);
         return;
       }
 
       if (message.type === "image:generate") {
-        const result = await generateImagesWithProvider(
+        await updateConnectionStatus("testing");
+        await markImageTaskGenerating(WORKER_SESSION_ID);
+        const rawResult = await generateImagesWithProvider(
           message.payload.settings,
           message.payload.input
         );
+        const result = rawResult.ok
+          ? rawResult
+          : {
+              ...rawResult,
+              message: toUserFacingError(rawResult.message).message,
+              technicalDetails: rawResult.message
+            };
         await finishImageTask(result);
+        await updateConnectionStatus(result.ok ? "success" : "error");
         sendResponse(result);
         return;
       }
@@ -135,9 +235,38 @@ chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, s
       sendResponse(null);
     } catch (error) {
       console.error("[Prompt Butler] 消息处理异常：", error);
+      const errorMessage = error instanceof Error ? error.message : "后台处理异常。";
+      if (message.type === "prompt:generate") {
+        const result = {
+          ok: false as const,
+          provider: message.payload.settings.provider,
+          model: message.payload.settings.reasoningModel,
+          generatedAt: new Date().toISOString(),
+          message: toUserFacingError(errorMessage).message
+        };
+        await finishPromptTask(result);
+        await updateConnectionStatus(result.ok ? "success" : "error");
+        sendResponse(result);
+        return;
+      }
+      if (message.type === "image:generate") {
+        const friendlyError = toUserFacingError(errorMessage);
+        const result = {
+          ok: false as const,
+          provider: message.payload.settings.provider,
+          model: message.payload.settings.imageModel,
+          generatedAt: new Date().toISOString(),
+          message: friendlyError.message,
+          technicalDetails: errorMessage
+        };
+        await finishImageTask(result);
+        await updateConnectionStatus(result.ok ? "success" : "error");
+        sendResponse(result);
+        return;
+      }
       sendResponse({
         ok: false,
-        message: error instanceof Error ? error.message : "后台处理异常。"
+        message: errorMessage
       });
     }
   })();

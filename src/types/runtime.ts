@@ -66,6 +66,7 @@ export interface OptimizePromptMessage {
   payload: {
     settings: ExtensionSettings;
     content: string;
+    direction?: string;
   };
 }
 

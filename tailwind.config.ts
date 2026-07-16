@@ -5,28 +5,52 @@ export default {
   theme: {
     extend: {
       colors: {
+        canvas: "var(--bg-canvas)",
+        app: "var(--bg-app)",
+        interactive: "var(--bg-interactive)",
+        input: "var(--bg-input-core)",
+        surface: {
+          1: "var(--bg-surface-1)",
+          2: "var(--bg-surface-2)",
+          3: "var(--bg-surface-3)",
+          elevated: "var(--bg-elevated)"
+        },
+        text: {
+          primary: "var(--text-primary)",
+          secondary: "var(--text-secondary)",
+          tertiary: "var(--text-tertiary)",
+          disabled: "var(--text-disabled)"
+        },
+        border: {
+          subtle: "var(--border-subtle)",
+          DEFAULT: "var(--border-default)",
+          strong: "var(--border-strong)"
+        },
         panel: {
-          900: "#010a18",
-          800: "#051228",
-          700: "#0b1a38"
+          900: "var(--bg-surface-1)",
+          800: "var(--bg-surface-2)",
+          700: "var(--bg-surface-3)"
         },
         accent: {
-          DEFAULT: "#00ff84",
-          soft: "#b8ff33",
-          vivid: "#00e0ff",
-          gold: "#ffb300"
+          DEFAULT: "var(--accent-primary)",
+          hover: "var(--accent-hover)",
+          pressed: "var(--accent-pressed)",
+          soft: "var(--accent-soft)",
+          border: "var(--accent-border)"
+        },
+        status: {
+          online: "var(--status-online)"
         }
       },
       boxShadow: {
-        glass: "0 24px 60px rgba(0, 0, 0, 0.55)",
-        neon: "0 0 0 1px rgba(0,255,132,0.30), 0 0 40px rgba(0,255,132,0.22)"
-      },
-      backgroundImage: {
-        "accent-radial":
-          "radial-gradient(circle at top right, rgba(0,255,132,0.30), rgba(184,255,51,0.10), transparent 45%)"
+        glass: "var(--shadow-panel)"
       },
       borderRadius: {
-        "4xl": "2rem"
+        sm: "var(--radius-small)",
+        md: "var(--radius-medium)",
+        lg: "var(--radius-large)",
+        xl: "var(--radius-xlarge)",
+        pill: "var(--radius-pill)"
       }
     }
   },

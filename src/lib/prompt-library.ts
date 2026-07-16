@@ -28,6 +28,7 @@ export const CORE_TABS: readonly string[] = ["角色设定", "图像生成", "�
 export const CUSTOM_TABS_KEY = "prompt-butler-custom-tabs";
 const DELETED_TABS_KEY = "prompt-butler-deleted-tabs";
 const TAB_ORDER_KEY = "prompt-butler-tab-order";
+const DELETED_PROMPT_IDS_KEY = "prompt-butler-deleted-prompt-ids";
 
 export async function getCustomTabs(): Promise<string[]> {
   return storageGet<string[]>(CUSTOM_TABS_KEY, []);
@@ -172,6 +173,12 @@ export async function savePromptToFavorites(input: {
   format: PromptOutputFormat;
   content: string;
   title?: string;
+  category?: string;
+  tags?: string[];
+  source?: SavedPromptRecord["source"];
+  isFavorite?: boolean;
+  isFrequent?: boolean;
+  contentVariants?: SavedPromptRecord["contentVariants"];
 }) {
   const existing = await storageGet<SavedPromptRecord[]>(
     PROMPT_STORAGE_KEYS.favorites,
@@ -185,9 +192,19 @@ export async function savePromptToFavorites(input: {
     model: input.model,
     format: input.format,
     content: input.content,
-    category: "收藏",
-    tags: recommendPromptTags(input.content),
-    order: 0
+    category: input.category?.trim() || "收藏",
+    tags: input.tags?.length ? input.tags : recommendPromptTags(input.content),
+    order: 0,
+    source: input.source ?? "creator",
+    isFavorite: input.isFavorite,
+    isFrequent: input.isFrequent,
+    versions: [],
+    usedCount: 0,
+    linkedImages: [],
+    version: "1.0",
+    usageCount: 0,
+    lastUsed: "",
+    contentVariants: input.contentVariants
   };
 
   await storageSet(PROMPT_STORAGE_KEYS.favorites, [record, ...existing]);
@@ -197,18 +214,19 @@ export async function savePromptToFavorites(input: {
 
 export async function updateFavoritePrompt(
   promptId: string,
-  patch: Partial<Pick<SavedPromptRecord, "title" | "content" | "category" | "tags">>
+  patch: Partial<Pick<SavedPromptRecord, "title" | "content" | "category" | "tags" | "isFavorite" | "isFrequent" | "lastUsedAt" | "versions" | "usedCount" | "linkedImages" | "version" | "usageCount" | "lastUsed" | "source" | "contentVariants">>
 ) {
   const existing = await storageGet<SavedPromptRecord[]>(
     PROMPT_STORAGE_KEYS.favorites,
     []
   );
+  const changesAssetContent = Object.keys(patch).some((key) => key !== "lastUsedAt");
   const nextRecords = existing.map((record) =>
     record.id === promptId
       ? {
           ...record,
           ...patch,
-          updatedAt: new Date().toISOString()
+          ...(changesAssetContent ? { updatedAt: new Date().toISOString() } : {})
         }
       : record
   );
@@ -363,13 +381,22 @@ export function searchPromptRecords(records: SavedPromptRecord[], searchQuery: s
 
 export async function importSeedPrompts(seeds: SavedPromptRecord[]): Promise<number> {
   const existing = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const deletedIds = new Set(await storageGet<string[]>(DELETED_PROMPT_IDS_KEY, []));
   const existingIds = new Set(existing.map((r) => r.id));
-  const newRecords = seeds.filter((r) => !existingIds.has(r.id));
+  const newRecords = seeds.filter((r) => !existingIds.has(r.id) && !deletedIds.has(r.id));
 
   if (newRecords.length === 0) return 0;
 
   await storageSet(PROMPT_STORAGE_KEYS.favorites, [...newRecords, ...existing]);
   return newRecords.length;
+}
+
+export async function rememberDeletedPrompt(promptId: string) {
+  if (!promptId.startsWith("seed-")) return;
+  const deletedIds = await storageGet<string[]>(DELETED_PROMPT_IDS_KEY, []);
+  if (!deletedIds.includes(promptId)) {
+    await storageSet(DELETED_PROMPT_IDS_KEY, [...deletedIds, promptId]);
+  }
 }
 
 export async function ensureSeedCategories(categories: string[]) {

@@ -1,0 +1,70 @@
+import { Check, Copy, Heart, Images, LoaderCircle, Sparkles, Trash2 } from "lucide-react";
+
+import type { SavedPromptRecord } from "../types/prompt";
+
+interface PromptCardProps {
+  record: SavedPromptRecord;
+  isCopied: boolean;
+  isFavorite: boolean;
+  isOptimizing: boolean;
+  onCopy: () => void;
+  onOpen: () => void;
+  onToggleFavorite: () => void;
+  onOptimize: () => void;
+  onDelete: () => void;
+}
+
+export function PromptCard({
+  record,
+  isCopied,
+  isFavorite,
+  isOptimizing,
+  onCopy,
+  onOpen,
+  onToggleFavorite,
+  onOptimize,
+  onDelete
+}: PromptCardProps) {
+  const title = record.title || record.content.slice(0, 32);
+  const linkedImageCount = record.linkedImages?.filter((item) => typeof item !== "string" && Boolean(item.imageUrl)).length ?? 0;
+
+  return (
+    <article className="prompt-asset-card">
+      <button type="button" className="prompt-card-open" onClick={onOpen}>
+        <h3>{title}</h3>
+        <p>{record.content}</p>
+      </button>
+
+      <div className={`prompt-card-case-count ${linkedImageCount > 0 ? "has-cases" : ""}`}>
+        <Images className="h-3.5 w-3.5" />
+        {linkedImageCount > 0 ? `${linkedImageCount} 张生成案例` : "暂无生成案例"}
+      </div>
+
+      <footer className="prompt-card-footer">
+        <div className="prompt-asset-tags">
+          {record.tags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
+        </div>
+        <div className="prompt-card-actions">
+          <button type="button" onClick={onCopy} title="复制提示词" aria-label="复制提示词">
+            {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          </button>
+          <button type="button" onClick={onOptimize} disabled={isOptimizing} title="AI 优化" aria-label="AI 优化">
+            {isOptimizing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            title={isFavorite ? "取消收藏" : "收藏"}
+            aria-label={isFavorite ? "取消收藏" : "收藏"}
+            className={isFavorite ? "prompt-card-action-favorite" : ""}
+          >
+            <Heart className="h-4 w-4" fill={isFavorite ? "currentColor" : "none"} />
+          </button>
+          <button type="button" onClick={onDelete} title="删除 Prompt" aria-label="删除 Prompt" className="prompt-card-action-delete">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </footer>
+    </article>
+  );
+}

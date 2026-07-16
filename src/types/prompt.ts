@@ -5,9 +5,12 @@ export interface ReferenceImage {
   name: string;
 }
 
+export type PromptSkillId = "standard" | "cinematic-image";
+
 export interface PromptGenerationInput {
   rolePreset: string;
   userRequirement: string;
+  skillId?: PromptSkillId;
   referenceImages?: ReferenceImage[];
 }
 
@@ -74,6 +77,25 @@ export type PromptOptimizationResult =
 
 export type PromptOutputFormat = "cnPrompt" | "enPrompt" | "structuredPrompt";
 
+export type PromptSource = "creator" | "ai-generated" | "user-created" | "system-template";
+
+export interface PromptVersion {
+  id: string;
+  version?: string;
+  content: string;
+  createdAt: string;
+  note?: string;
+}
+
+export interface PromptLinkedImage {
+  imageId?: string;
+  imageUrl: string;
+  model: string;
+  ratio: string;
+  resolution: string;
+  createdAt: string;
+}
+
 export interface SavedPromptRecord {
   id: string;
   title: string;
@@ -86,12 +108,24 @@ export interface SavedPromptRecord {
   category: string;
   tags: string[];
   order?: number;
+  isFavorite?: boolean;
+  isFrequent?: boolean;
+  lastUsedAt?: string;
+  source?: PromptSource;
+  versions?: PromptVersion[];
+  usedCount?: number;
+  linkedImages?: Array<PromptLinkedImage | string>;
+  version?: string;
+  usageCount?: number;
+  lastUsed?: string;
+  contentVariants?: Partial<Record<PromptOutputFormat, string>>;
 }
 
 export interface PromptWorkspaceState {
   rolePreset: string;
   rolePresetLocked: boolean;
   userRequirement: string;
+  skillId?: PromptSkillId;
 }
 
 export interface PromptFolder {

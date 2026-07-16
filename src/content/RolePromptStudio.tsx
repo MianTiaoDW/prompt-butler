@@ -1,40 +1,40 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowRight,
   Check,
-  Copy,
+  ChevronDown,
+  ChevronRight,
+  Eraser,
   ImagePlus,
   LoaderCircle,
-  Save,
   Sparkles,
   Wand2,
   X
 } from "lucide-react";
 
 import { useChromeStorage } from "../hooks/useChromeStorage";
-import { saveImageWorkspacePrompt } from "../lib/image-library";
-import {
-  createPromptFolder,
-  ensureDefaultRolePreset,
-  PROMPT_STORAGE_KEYS,
-  savePromptToFavorites
-} from "../lib/prompt-library";
-import { storageGet, storageSet } from "../lib/storage";
-import type { PromptFolder, SavedPromptRecord } from "../types/prompt";
-import { clearPromptTask, getPromptTask, startPromptTask } from "../lib/task-broker";
-import type { PromptTaskState } from "../lib/task-broker";
+import { saveImageWorkspace } from "../lib/image-library";
+import { getPromptSkillProfile, PROMPT_SKILL_PROFILES } from "../lib/prompt-skills";
+import { ensureDefaultRolePreset, PROMPT_STORAGE_KEYS, savePromptToFavorites, updateFavoritePrompt } from "../lib/prompt-library";
+import { storageGet } from "../lib/storage";
+import type { SavedPromptRecord } from "../types/prompt";
+import { failPromptTask, getPromptTask, startPromptTask, subscribePromptTask } from "../lib/task-broker";
 import { showToast } from "../lib/toast";
-import { sendRuntimeMessage, sendRuntimeMessageLong } from "../lib/runtime";
+import { sendRuntimeMessageLong } from "../lib/runtime";
 import type {
   PromptGenerationResult,
   PromptOutputFormat,
   PromptWorkspaceState
 } from "../types/prompt";
 import type { ExtensionSettings } from "../types/settings";
+import { PromptActionBar } from "./PromptActionBar";
+import { PromptSaveModal, type PromptSaveValues } from "./PromptSaveModal";
 
 const defaultWorkspaceState: PromptWorkspaceState = {
   rolePreset: "",
   rolePresetLocked: false,
-  userRequirement: ""
+  userRequirement: "",
+  skillId: "cinematic-image"
 };
 
 function convertFileToDataUrl(file: File) {
@@ -59,30 +59,55 @@ function structuredPromptToText(value: PromptGenerationResult & { ok: true }) {
   return JSON.stringify(value.output.structuredPrompt, null, 2);
 }
 
+function getRoleDisplayName(rolePreset: string) {
+  try {
+    const parsed = JSON.parse(rolePreset) as Record<string, unknown>;
+    const role = parsed["# 角色"];
+    if (typeof role === "string" && role.trim()) return role.trim();
+  } catch {
+    const firstLine = rolePreset.split("\n").find((line) => line.trim());
+    if (firstLine) return firstLine.replace(/^#+\s*/, "").slice(0, 24);
+  }
+  return "视觉创作专家";
+}
+
 export function RolePromptStudio(props: {
   settings: ExtensionSettings;
   isServiceReady: boolean;
+  onOpenImageStudio: () => void;
 }) {
-  const { settings, isServiceReady } = props;
+  const { settings, isServiceReady, onOpenImageStudio } = props;
   const workspace = useChromeStorage<PromptWorkspaceState>(
     PROMPT_STORAGE_KEYS.workspace,
     defaultWorkspaceState
   );
-  const [isExpanded, setIsExpanded] = useState(true);
+  const promptAssets = useChromeStorage<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [referenceImages, setReferenceImages] = useState<Array<{ dataUrl: string; name: string }>>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationResult, setGenerationResult] = useState<PromptGenerationResult | null>(null);
   const [panelMessage, setPanelMessage] = useState("填写角色设定和需求后点击生成");
   const [copiedFormat, setCopiedFormat] = useState<PromptOutputFormat | null>(null);
-  const [savedFormat, setSavedFormat] = useState<PromptOutputFormat | null>(null);
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [pendingSave, setPendingSave] = useState<{ format: PromptOutputFormat; text: string } | null>(null);
-  const [pickerFolders, setPickerFolders] = useState<PromptFolder[]>([]);
-  const [newFolderName, setNewFolderName] = useState("");
+  const [pendingFrequent, setPendingFrequent] = useState(false);
+  const [savedRecords, setSavedRecords] = useState<Partial<Record<PromptOutputFormat, SavedPromptRecord>>>({});
   const [editingFormat, setEditingFormat] = useState<PromptOutputFormat | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [expandedOutputs, setExpandedOutputs] = useState<PromptOutputFormat[]>(["cnPrompt"]);
 
   const { value: workspaceState, setValue: setWorkspaceState, isLoading } = workspace;
+  const selectedSkill = getPromptSkillProfile(workspaceState.skillId);
+  const quickPrompts = useMemo(
+    () => [...promptAssets.value]
+      .sort((left, right) => {
+        const frequentDiff = Number(Boolean(right.isFrequent)) - Number(Boolean(left.isFrequent));
+        if (frequentDiff !== 0) return frequentDiff;
+        return new Date(right.lastUsedAt ?? right.updatedAt ?? right.createdAt).getTime() - new Date(left.lastUsedAt ?? left.updatedAt ?? left.createdAt).getTime();
+      })
+      .slice(0, 3),
+    [promptAssets.value]
+  );
 
   useEffect(() => {
     if (!copiedFormat) {
@@ -96,17 +121,6 @@ export function RolePromptStudio(props: {
     return () => window.clearTimeout(timer);
   }, [copiedFormat]);
 
-  useEffect(() => {
-    if (!savedFormat) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setSavedFormat(null);
-    }, 1800);
-
-    return () => window.clearTimeout(timer);
-  }, [savedFormat]);
 
   useEffect(() => {
     void ensureDefaultRolePreset().then(() => {
@@ -123,24 +137,42 @@ export function RolePromptStudio(props: {
   }, []);
 
   useEffect(() => {
-    void getPromptTask().then((task) => {
-      if (task.status === "running") {
+    const applyTaskState = (task: Awaited<ReturnType<typeof getPromptTask>>) => {
+      if (task.status === "submitting" || task.status === "generating") {
         setIsGenerating(true);
         setPanelMessage("正在通过 Background 调用模型扩写角色提示词...");
-      } else if (task.status === "done" && task.result) {
+        return;
+      }
+
+      if ((task.status === "success" || task.status === "error") && task.result) {
         setGenerationResult(task.result);
         setIsGenerating(false);
         if (task.result.ok) {
-          void saveImageWorkspacePrompt(task.result.output.cnPrompt);
           setPanelMessage(
-            `已完成生成，当前使用模型：${task.result.model}，提示词已同步到生图区。`
+            `已完成生成，当前使用模型：${task.result.model}。`
           );
         } else {
           setPanelMessage(`生成失败：${task.result.message}`);
         }
+        return;
       }
-    });
-  }, []);
+
+      if (task.status === "error" && task.errorMessage) {
+        setGenerationResult({
+          ok: false,
+          provider: settings.provider,
+          model: settings.reasoningModel,
+          generatedAt: task.finishedAt ?? new Date().toISOString(),
+          message: task.errorMessage
+        });
+        setPanelMessage(`生成失败：${task.errorMessage}`);
+      }
+      setIsGenerating(false);
+    };
+
+    void getPromptTask().then(applyTaskState);
+    return subscribePromptTask(applyTaskState);
+  }, [settings.provider, settings.reasoningModel]);
 
   const canGenerate = useMemo(() => {
     return Boolean(
@@ -161,7 +193,9 @@ export function RolePromptStudio(props: {
     if (isGenerating) return;
     setIsGenerating(true);
     setPanelMessage("正在通过 Background 调用模型扩写角色提示词...");
-    setGenerationResult(null);
+    setSavedRecords({});
+    setPendingSave(null);
+    setPendingFrequent(false);
     await startPromptTask();
 
     try {
@@ -173,14 +207,14 @@ export function RolePromptStudio(props: {
             input: {
               rolePreset: workspaceState.rolePreset,
               userRequirement: workspaceState.userRequirement,
+              skillId: workspaceState.skillId,
               referenceImages: referenceImages.length > 0 ? referenceImages : undefined
             }
           }
         },
         async () => {
           const task = await getPromptTask();
-          if (task.status === "done" && task.result) {
-            void clearPromptTask();
+          if ((task.status === "success" || task.status === "error") && task.result) {
             return task.result;
           }
           return null;
@@ -189,18 +223,24 @@ export function RolePromptStudio(props: {
 
       setGenerationResult(result);
       if (result.ok) {
-        await saveImageWorkspacePrompt(result.output.cnPrompt);
+        setExpandedOutputs(["cnPrompt"]);
         setPanelMessage(
-          `已完成生成，当前使用模型：${result.model}，提示词已同步到生图区。`
+          `已完成生成，当前使用模型：${result.model}。`
         );
       } else {
         setPanelMessage(`生成失败：${result.message}`);
       }
     } catch (error) {
-      setGenerationResult(null);
-      setPanelMessage(
-        error instanceof Error ? `生成失败：${error.message}` : "生成失败。"
-      );
+      const message = error instanceof Error ? error.message : "生成失败。";
+      await failPromptTask(message);
+      setGenerationResult({
+        ok: false,
+        provider: settings.provider,
+        model: settings.reasoningModel,
+        generatedAt: new Date().toISOString(),
+        message
+      });
+      setPanelMessage(`生成失败：${message}`);
     } finally {
       setIsGenerating(false);
     }
@@ -239,59 +279,69 @@ export function RolePromptStudio(props: {
     showToast("已保存修改~");
   };
 
-  const openFolderPicker = async (format: PromptOutputFormat, text: string) => {
-    const folders = await storageGet<PromptFolder[]>(PROMPT_STORAGE_KEYS.folders, []);
-    const scopeFolders = folders.filter((f) => (f.scope || "收藏") === "收藏");
-    setPickerFolders(scopeFolders);
+  const openSaveModal = (format: PromptOutputFormat, text: string, frequent = false) => {
     setPendingSave({ format, text });
-    setNewFolderName("");
-    setFolderPickerOpen(true);
+    setPendingFrequent(frequent);
   };
 
-  const confirmSaveToFolder = async (folderName: string | null) => {
+  const confirmSavePrompt = async (values: PromptSaveValues) => {
     if (!generationResult?.ok || !pendingSave) return;
-
-    const category = folderName ? `收藏/${folderName}` : "收藏";
-    await savePromptToFavorites({
+    const record = await savePromptToFavorites({
       provider: generationResult.provider,
       model: generationResult.model,
       format: pendingSave.format,
       content: pendingSave.text,
-      title: pendingSave.text.slice(0, 28)
+      title: values.title,
+      category: `收藏/${values.category}`,
+      tags: values.tags,
+      source: "ai-generated",
+      isFavorite: true,
+      isFrequent: pendingFrequent,
+      contentVariants: {
+        cnPrompt: generationResult.output.cnPrompt,
+        enPrompt: generationResult.output.enPrompt,
+        structuredPrompt: structuredPromptToText(generationResult)
+      }
     });
-    // 更新分类
-    const allRecords = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
-    const target = allRecords.find((r) => r.content === pendingSave.text && r.category === "收藏");
-    if (target) {
-      const updated = allRecords.map((r) =>
-        r.id === target.id ? { ...r, category, updatedAt: new Date().toISOString() } : r
-      );
-      await storageSet(PROMPT_STORAGE_KEYS.favorites, updated);
-    }
-
-    setSavedFormat(pendingSave.format);
-    setFolderPickerOpen(false);
+    setSavedRecords((current) => ({ ...current, [pendingSave.format]: record }));
     setPendingSave(null);
-    showToast(folderName ? `已保存到「${folderName}」~` : "已保存到收藏~");
+    setPendingFrequent(false);
+    showToast("已保存到提示词库");
   };
 
-  const handleCreateAndSave = async () => {
-    const name = newFolderName.trim();
-    if (!name) return;
-    try {
-      await createPromptFolder(name, "收藏");
-      const folders = await storageGet<PromptFolder[]>(PROMPT_STORAGE_KEYS.folders, []);
-      setPickerFolders(folders.filter((f) => (f.scope || "收藏") === "收藏"));
-      setNewFolderName("");
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "创建失败");
+  const toggleFrequent = async (format: PromptOutputFormat, text: string) => {
+    const record = savedRecords[format];
+    if (!record) {
+      openSaveModal(format, text, true);
+      return;
     }
+    const updated = await updateFavoritePrompt(record.id, { isFrequent: !record.isFrequent });
+    if (updated) setSavedRecords((current) => ({ ...current, [format]: updated }));
+    showToast(record.isFrequent ? "已移出常用" : "已加入常用");
+  };
+
+  const sendToImageStudio = async (format: PromptOutputFormat, text: string) => {
+    if (!generationResult?.ok) return;
+    const record = savedRecords[format];
+    await saveImageWorkspace({
+      prompt: text,
+      lastUpdatedAt: null,
+      source: {
+        promptId: record?.id,
+        title: record?.title || workspaceState.userRequirement.slice(0, 28) || "未命名创作",
+        type: record?.source ?? "temporary",
+        format,
+        provider: generationResult.provider,
+        model: generationResult.model
+      }
+    });
+    onOpenImageStudio();
   };
 
   const outputs = generationResult?.ok
     ? [
         {
-          title: "中文段落",
+          title: "中文提示词",
           format: "cnPrompt" as const,
           text: generationResult.output.cnPrompt
         },
@@ -301,7 +351,7 @@ export function RolePromptStudio(props: {
           text: generationResult.output.enPrompt
         },
         {
-          title: "高结构化 JSON",
+          title: "高级结构化数据",
           format: "structuredPrompt" as const,
           text: structuredPromptToText(generationResult)
         }
@@ -309,94 +359,44 @@ export function RolePromptStudio(props: {
     : [];
 
   return (
-    <div className="space-y-4">
-      <section className="glass-card p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="section-label">角色预设区</div>
-            <div className="section-hint">
-              设定一个角色，支持JSON或大白话
-            </div>
+    <div className="creator-workbench">
+      <header className="creator-workbench-hero">
+        <h1>创作提示词</h1>
+        <p>描述你的想法，让 AI 帮你生成专业提示词。</p>
+      </header>
+
+      <section className="creator-input-surface">
+        <div className="creator-input-heading">
+          <div>
+            <div className="section-label">创意描述</div>
+            <div className="section-hint">写下主体、场景、风格或想表达的氛围。</div>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {isExpanded ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void updateWorkspace({
-                      rolePresetLocked: true
-                    });
-                    setPanelMessage("角色已锁定，可输入需求生成");
-                  }}
-                  disabled={workspaceState.rolePresetLocked || !workspaceState.rolePreset.trim()}
-                  className="gradient-button rounded-xl px-3 py-2 text-xs"
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void updateWorkspace({
-                      rolePresetLocked: false
-                    });
-                    setPanelMessage("角色已恢复可编辑");
-                  }}
-                  className="ghost-button rounded-xl px-2.5 py-2 text-xs"
-                >
-                  修改
-                </button>
-              </>
+          <div className="creator-input-meta">
+            <span>{workspaceState.userRequirement.length} 字</span>
+            {workspaceState.userRequirement ? (
+              <button
+                type="button"
+                onClick={() => void updateWorkspace({ userRequirement: "" })}
+                aria-label="清空创意描述"
+              >
+                <Eraser className="h-4 w-4" />
+                清空
+              </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                setIsExpanded((current) => !current);
-              }}
-              className="rounded-xl border border-white/10 bg-white/[0.06] px-2.5 py-2 text-xs text-white/58 transition hover:border-accent/30 hover:text-white"
-            >
-              {isExpanded ? "收起" : "展开"}
-            </button>
           </div>
         </div>
 
-        {isExpanded ? (
-          <div className="mt-3">
-            <textarea
-              value={workspaceState.rolePreset}
-              onChange={(event) => {
-                void updateWorkspace({
-                  rolePreset: event.target.value
-                });
-              }}
-              disabled={workspaceState.rolePresetLocked || isLoading}
-              placeholder="例如：你是一个资深 AI 绘画提示词专家，擅长把用户的简单想法扩写成完整、可执行、画面感强的提示词。"
-              className="form-field min-h-[150px] w-full resize-y rounded-[1.15rem] px-4 py-3 text-[15px] leading-7 disabled:bg-white/5 disabled:text-white/45"
-            />
-          </div>
-        ) : null}
-      </section>
-
-      <section className="glass-card p-3">
-        <div className="section-label">用户需求区</div>
-        <div className="section-hint">
-          描述希望呈现的场景、风格或镜头语言
-        </div>
         <textarea
           value={workspaceState.userRequirement}
-          onChange={(event) => {
-            void updateWorkspace({
-              userRequirement: event.target.value
-            });
-          }}
-          placeholder="例如：做成电影海报风，暴雨夜站在霓虹街头，强烈逆光和慢门动势。"
-          className="form-field mt-3 min-h-[112px] w-full resize-y rounded-[1.15rem] px-4 py-3 text-[15px] leading-7"
+          onChange={(event) => void updateWorkspace({ userRequirement: event.target.value })}
+          placeholder="例如：为一款东方茶饮设计商业海报，产品悬浮在晨雾山谷中，柔和逆光，留出品牌标题区域。"
+          className="form-field creator-idea-input"
         />
 
-        <div className="mt-3 space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="creator-input-footer">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {referenceImages.length < 8 ? (
-              <label className="ghost-button cursor-pointer px-4 py-3 text-[13px]">
+              <label className="creator-reference-button">
                 <ImagePlus className="h-4 w-4" />
                 添加参考图
                 <input
@@ -408,262 +408,207 @@ export function RolePromptStudio(props: {
                     const files = Array.from(event.target.files ?? []);
                     if (files.length === 0) return;
                     const remaining = 8 - referenceImages.length;
-                    const toAdd = files.slice(0, remaining);
                     void Promise.all(
-                      toAdd.map((file) =>
-                        convertFileToDataUrl(file).then((dataUrl) => ({
-                          dataUrl,
-                          name: file.name
-                        }))
+                      files.slice(0, remaining).map((file) =>
+                        convertFileToDataUrl(file).then((dataUrl) => ({ dataUrl, name: file.name }))
                       )
-                    )
-                      .then((newImages) => {
-                        setReferenceImages((prev) => [...prev, ...newImages]);
-                        setPanelMessage(`已附加 ${newImages.length} 张参考图`);
-                      })
-                      .catch((error: unknown) => {
-                        setPanelMessage(
-                          error instanceof Error ? error.message : "读取参考图失败。"
-                        );
-                      });
+                    ).then((newImages) => {
+                      setReferenceImages((previous) => [...previous, ...newImages]);
+                      setPanelMessage(`已附加 ${newImages.length} 张参考图`);
+                    }).catch((error: unknown) => {
+                      setPanelMessage(error instanceof Error ? error.message : "读取参考图失败。");
+                    });
                   }}
                 />
               </label>
             ) : null}
-            <span className="text-xs text-white/35">最多上传 8 张参考图</span>
+            <span className="creator-reference-count">{referenceImages.length}/8</span>
           </div>
-          {referenceImages.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {referenceImages.map((img, index) => (
-                <div key={index} className="group relative">
-                  <img
-                    src={img.dataUrl}
-                    alt={img.name}
-                    className="h-16 w-16 rounded-2xl border border-white/10 object-cover shadow-[0_10px_26px_rgba(0,0,0,0.24)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReferenceImages((prev) => prev.filter((_, i) => i !== index));
-                      setPanelMessage("已移除参考图");
-                    }}
-                    className="absolute -right-1.5 -top-1.5 rounded-full border border-white/10 bg-slate-950/90 p-0.5 text-white/55 transition hover:text-rose-300"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
+          {quickPrompts.length > 0 ? <div className="creator-quick-prompts"><span>最近使用</span>{quickPrompts.map((record) => <button key={record.id} type="button" title={record.title || record.content.slice(0, 28)} onClick={() => void updateWorkspace({ userRequirement: record.content })}>{record.title || record.content.slice(0, 12)}</button>)}</div> : null}
         </div>
-      </section>
 
-      <section className="glass-card p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="section-label">生成提示词</div>
-            <div className="section-hint">
-              参考图走视觉模型，否则走推理模型
-            </div>
+        {referenceImages.length > 0 ? (
+          <div className="creator-reference-grid">
+            {referenceImages.map((image, index) => (
+              <div key={`${image.name}-${index}`} className="group relative">
+                <img src={image.dataUrl} alt={image.name} />
+                <button
+                  type="button"
+                  onClick={() => setReferenceImages((previous) => previous.filter((_, itemIndex) => itemIndex !== index))}
+                  aria-label={`移除参考图 ${image.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              void handleGenerate();
-            }}
-            disabled={!canGenerate || isGenerating}
-            className="gradient-button px-3 py-2 text-[13px]"
-          >
-            {isGenerating ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {isGenerating ? "生成中..." : "生成提示词"}
-          </button>
-        </div>
-
-        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-[11px] leading-5 text-white/48">
-          {isServiceReady
-            ? panelMessage
-            : "请先在配置中心完成连接配置"}
-        </div>
+        ) : null}
       </section>
 
-      <section className="glass-card p-4">
-        <div className="section-label">输出结果区</div>
-        <div className="section-hint">
-          输出中文、英文及结构化 JSON
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {generationResult && !generationResult.ok ? (
-            <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-[14px] leading-6 text-rose-200">
-              {generationResult.message}
-            </div>
-          ) : null}
-
-          {outputs.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-8 text-[14px] leading-6 text-white/38">
-              生成完成后在此展示、复制或收藏
-            </div>
-          ) : null}
-
-          {outputs.map((item) => (
-            <article
-              key={item.format}
-              className="media-card px-4 py-4"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-[13px] font-semibold text-white/85">{item.title}</div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleCopy(item.format, item.text);
-                    }}
-                    className="ghost-button rounded-xl px-3 py-2 text-[11px]"
-                  >
-                    {copiedFormat === item.format ? (
-                      <Check className="h-3.5 w-3.5" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                    {copiedFormat === item.format ? "已复制" : "一键复制"}
-                  </button>
-                  {editingFormat === item.format ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          saveEditing(item.format);
-                        }}
-                        className="gradient-button rounded-xl px-3 py-2 text-[11px]"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        保存修改
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingFormat(null);
-                        }}
-                        className="ghost-button rounded-xl px-3 py-2 text-[11px]"
-                      >
-                        取消
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          startEditing(item.format, item.text);
-                        }}
-                        className="ghost-button rounded-xl px-3 py-2 text-[11px]"
-                      >
-                        <Wand2 className="h-3.5 w-3.5" />
-                        重新编辑
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void openFolderPicker(item.format, item.text);
-                        }}
-                        className="ghost-button rounded-xl px-3 py-2 text-[11px]"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        {savedFormat === item.format ? "已收藏" : "保存到收藏"}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {editingFormat === item.format ? (
-                <textarea
-                  value={editingText}
-                  onChange={(e) => { setEditingText(e.target.value); }}
-                  className="form-field mt-3 min-h-[120px] w-full resize-y text-[14px] leading-7"
-                />
-              ) : (
-                <pre className="mt-3 whitespace-pre-wrap break-words text-[14px] leading-7 text-white/68">
-                  {item.text}
-                </pre>
-              )}
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {folderPickerOpen ? (
-        <div
-          className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          onClick={() => {
-            setFolderPickerOpen(false);
-          }}
-        >
-          <div
-            className="aurora-shell w-72 rounded-[1.35rem] p-5"
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-          >
-            <div className="section-label mb-3">保存到收藏夹</div>
-
-            {pickerFolders.length > 0 ? (
-              <div className="space-y-1 mb-3 max-h-40 overflow-y-auto no-scrollbar">
-                {pickerFolders.map((folder) => (
-                  <button
-                    key={folder.id}
-                    type="button"
-                    onClick={() => {
-                      void confirmSaveToFolder(folder.name);
-                    }}
-                    className="w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2.5 text-left text-[13px] text-white/68 transition hover:border-accent/30 hover:text-white"
-                  >
-                    {folder.name}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="text-[11px] text-white/35 mb-3">暂无收藏夹</div>
-            )}
-
-            <div className="flex items-center gap-2 mb-3">
-              <input
-                value={newFolderName}
-                onChange={(e) => { setNewFolderName(e.target.value); }}
-                placeholder="新建收藏夹名称"
-                className="form-field flex-1 rounded-xl px-3 py-2 text-[13px]"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    void handleCreateAndSave();
-                  }
-                }}
-              />
+      <section className="creator-settings-panel" aria-label="智能配置">
+        <button type="button" className="creator-setting-row" onClick={() => setIsExpanded((current) => !current)}>
+          <span>
+            <strong>专家身份</strong>
+            <small>{getRoleDisplayName(workspaceState.rolePreset)}</small>
+          </span>
+          <ChevronRight className={`h-4 w-4 ${isExpanded ? "rotate-90" : ""}`} />
+        </button>
+        {isExpanded ? (
+          <div className="creator-setting-detail">
+            <textarea
+              value={workspaceState.rolePreset}
+              onChange={(event) => void updateWorkspace({ rolePreset: event.target.value })}
+              disabled={workspaceState.rolePresetLocked || isLoading}
+              className="form-field min-h-[150px]"
+            />
+            <div className="mt-3 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => { void handleCreateAndSave(); }}
-                disabled={!newFolderName.trim()}
-                className="gradient-button shrink-0 rounded-xl px-3 py-2 text-[13px] disabled:opacity-30"
+                onClick={() => void updateWorkspace({ rolePresetLocked: !workspaceState.rolePresetLocked })}
+                className="ghost-button min-h-10 px-3 text-xs"
               >
-                新建
+                {workspaceState.rolePresetLocked ? "重新编辑" : "锁定身份"}
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                void confirmSaveToFolder(null);
-              }}
-              className="ghost-button w-full rounded-xl px-3 py-2.5 text-[13px]"
-            >
-              直接保存到收藏根目录
-            </button>
           </div>
+        ) : null}
+
+        <button type="button" className="creator-setting-row" onClick={() => setIsSkillPickerOpen((current) => !current)}>
+          <span>
+            <strong>专业工作流</strong>
+            <small>{selectedSkill.name}</small>
+          </span>
+          <ChevronRight className={`h-4 w-4 ${isSkillPickerOpen ? "rotate-90" : ""}`} />
+        </button>
+        {isSkillPickerOpen ? (
+          <div className="creator-setting-detail grid gap-2">
+            {PROMPT_SKILL_PROFILES.map((skill) => (
+              <button
+                key={skill.id}
+                type="button"
+                onClick={() => {
+                  void updateWorkspace({ skillId: skill.id });
+                  setIsSkillPickerOpen(false);
+                  setPanelMessage(`已选择「${skill.name}」工作流`);
+                }}
+                className={`skill-choice text-left ${selectedSkill.id === skill.id ? "skill-choice-active" : ""}`}
+              >
+                <span className="block text-sm font-semibold">{skill.name}</span>
+                <span className="mt-1 block text-xs leading-5 text-secondary">{skill.summary}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          className="creator-setting-row"
+          onClick={() => chrome.runtime.sendMessage({ type: "open-options-page" })}
+        >
+          <span>
+            <strong>模型</strong>
+            <small>{referenceImages.length > 0 ? settings.visionModel : settings.reasoningModel || "自动选择"}</small>
+          </span>
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </section>
+
+      <section className="creator-generate-panel">
+        <button
+          type="button"
+          onClick={() => void handleGenerate()}
+          disabled={!canGenerate || isGenerating}
+          className="gradient-button creator-generate-button"
+        >
+          {isGenerating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {isGenerating ? "正在生成提示词..." : generationResult?.ok ? "重新生成" : "开始生成"}
+        </button>
+        <p>{isServiceReady ? panelMessage : "请先在配置中心完成连接配置"}</p>
+      </section>
+
+      <section className="creator-results-workbench">
+        <div className="creator-results-heading">
+          <div>
+            <div className="section-label">生成结果</div>
+            <div className="section-hint">先完成中文提示词，再按需查看英文与结构化数据。</div>
+          </div>
+          {generationResult?.ok ? (
+            <div className="creator-results-cta">
+              <span className={`prompt-temporary-status ${savedRecords.cnPrompt ? "is-saved" : ""}`}>{savedRecords.cnPrompt ? "已保存" : "未保存"}</span>
+              <button type="button" onClick={() => void sendToImageStudio("cnPrompt", generationResult.output.cnPrompt)}>
+                开始创作<ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+
+        {generationResult && !generationResult.ok ? (
+          <div className="creator-error-state">{generationResult.message}</div>
+        ) : null}
+
+        {outputs.length === 0 ? (
+          <div className="creator-result-empty">输入创意并开始生成，结果会在这里进入编辑工作流。</div>
+        ) : (
+          <div className="creator-output-stack">
+            {outputs.map((item) => {
+              const isOutputExpanded = expandedOutputs.includes(item.format);
+              const isPrimaryOutput = item.format === "cnPrompt";
+              return (
+                <article key={item.format} className={`creator-output-card ${isPrimaryOutput ? "creator-output-card-primary" : ""}`}>
+                  <div className="creator-output-header">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedOutputs((current) =>
+                        current.includes(item.format)
+                          ? current.filter((format) => format !== item.format)
+                          : [...current, item.format]
+                      )}
+                      aria-expanded={isOutputExpanded}
+                    >
+                      <span>{item.title}</span>
+                      <ChevronDown className={`h-4 w-4 ${isOutputExpanded ? "rotate-180" : ""}`} />
+                    </button>
+
+                    <div className="creator-output-actions">
+                      <PromptActionBar
+                        copied={copiedFormat === item.format}
+                        saved={Boolean(savedRecords[item.format])}
+                        frequent={Boolean(savedRecords[item.format]?.isFrequent)}
+                        onCopy={() => void handleCopy(item.format, item.text)}
+                        onSave={() => openSaveModal(item.format, item.text)}
+                        onFrequent={() => void toggleFrequent(item.format, item.text)}
+                        onSendToImage={() => void sendToImageStudio(item.format, item.text)}
+                      />
+                      {isOutputExpanded ? editingFormat === item.format ? (
+                        <><button type="button" onClick={() => saveEditing(item.format)}><Check className="h-3.5 w-3.5" />保存修改</button><button type="button" onClick={() => setEditingFormat(null)}>取消</button></>
+                      ) : (
+                        <button type="button" onClick={() => startEditing(item.format, item.text)} title="重新编辑"><Wand2 className="h-3.5 w-3.5" /></button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {isOutputExpanded ? editingFormat === item.format ? (
+                    <textarea
+                      value={editingText}
+                      onChange={(event) => setEditingText(event.target.value)}
+                      className="form-field creator-output-editor"
+                    />
+                  ) : (
+                    <pre className="creator-output-content">{item.text}</pre>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <PromptSaveModal
+        open={Boolean(pendingSave)}
+        defaultTitle={workspaceState.userRequirement.slice(0, 28) || pendingSave?.text.slice(0, 28) || "未命名提示词"}
+        onClose={() => { setPendingSave(null); setPendingFrequent(false); }}
+        onSave={(values) => void confirmSavePrompt(values)}
+      />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import type { PromptOutputFormat, PromptSource } from "./prompt";
 import type { ImageAspectRatio, ProviderId } from "./settings";
 
 export interface ImageGenerationInput {
@@ -28,6 +29,7 @@ export interface ImageGenerationFailure {
   model: string;
   generatedAt: string;
   message: string;
+  technicalDetails?: string;
 }
 
 export type ImageGenerationResult =
@@ -37,6 +39,14 @@ export type ImageGenerationResult =
 export interface ImageWorkspaceState {
   prompt: string;
   lastUpdatedAt: string | null;
+  source?: {
+    promptId?: string;
+    title: string;
+    type: PromptSource | "temporary";
+    format: PromptOutputFormat;
+    provider?: ProviderId;
+    model?: string;
+  };
 }
 
 export interface ImageHistoryEntry {
@@ -50,4 +60,7 @@ export interface ImageHistoryEntry {
   count: number;
   generatedAt: string;
   revisedPrompt?: string;
+  promptId?: string;
+  promptTitle?: string;
+  promptSource?: ImageWorkspaceState["source"];
 }

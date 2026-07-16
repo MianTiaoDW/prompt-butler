@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ChevronDown,
   Copy,
   Download,
   LoaderCircle,
+  Save,
   Sparkles,
   X
 } from "lucide-react";
@@ -17,13 +19,21 @@ import {
   getImageHistory,
   IMAGE_STORAGE_KEYS
 } from "../lib/image-library";
+import { getImageConnectionSettings } from "../lib/provider-presets";
+import { toUserFacingError } from "../lib/error-messages";
+import { PROMPT_STORAGE_KEYS, savePromptToFavorites, updateFavoritePrompt } from "../lib/prompt-library";
+import { storageGet } from "../lib/storage";
 import { sendRuntimeMessage, sendRuntimeMessageLong } from "../lib/runtime";
-import type { ImageTaskState } from "../lib/task-broker";
-import { clearImageTask, getImageTask, startImageTask } from "../lib/task-broker";
+import { clearImageTask, failImageTask, getImageTask, startImageTask, subscribeImageTask } from "../lib/task-broker";
 import { showToast } from "../lib/toast";
 import type { GeneratedImageAsset, ImageGenerationResult, ImageHistoryEntry, ImageWorkspaceState } from "../types/image";
+import type { PromptLinkedImage, SavedPromptRecord } from "../types/prompt";
 import type { ExtensionSettings } from "../types/settings";
 import { IMAGE_ASPECT_RATIOS, IMAGE_COUNTS, IMAGE_RESOLUTIONS } from "../types/settings";
+import { PromptHistoryPanel } from "./PromptHistoryPanel";
+import { PromptPreviewModal } from "./PromptPreviewModal";
+import { WorkflowConnector } from "./WorkflowConnector";
+import { MOTION } from "../lib/motion";
 
 const selectClassName = [
   "form-field appearance-none w-full pl-4 pr-10 py-3",
@@ -43,12 +53,22 @@ async function copyImageToClipboard(imageUrl: string) {
   }
 }
 
+function getGalleryAspectClass(aspectRatio: ExtensionSettings["imageAspectRatio"]) {
+  if (aspectRatio === "1:1") return "aspect-square";
+  if (aspectRatio === "16:9" || aspectRatio === "3:1" || aspectRatio === "8:1" || aspectRatio === "21:1") {
+    return "aspect-video";
+  }
+  if (aspectRatio === "4:3") return "aspect-[4/3]";
+  return "aspect-[3/4]";
+}
+
 export function ImageStudio(props: {
   settings: ExtensionSettings;
   isServiceReady: boolean;
 }) {
-  const { settings, isServiceReady } = props;
-  const { setImageResolution, setImageCount, setImageAspectRatio } = useExtensionSettings();
+  const shouldReduceMotion = useReducedMotion();
+  const { settings } = props;
+  const { setImageResolution, setImageCount, setImageAspectRatio, updateSettings } = useExtensionSettings();
   const workspaceStorage = useChromeStorage<ImageWorkspaceState>(
     IMAGE_STORAGE_KEYS.workspace,
     defaultImageWorkspaceState
@@ -57,39 +77,76 @@ export function ImageStudio(props: {
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [generationResult, setGenerationResult] = useState<ImageGenerationResult | null>(null);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [previewImage, setPreviewImage] = useState<GeneratedImageAsset | null>(null);
   const [imageHistory, setImageHistory] = useState<ImageHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [previewPromptRecord, setPreviewPromptRecord] = useState<SavedPromptRecord | null>(null);
+  const generationLockRef = useRef(false);
 
   useEffect(() => {
     void getImageHistory().then(setImageHistory);
   }, []);
 
   const { value: workspace, setValue: setWorkspace } = workspaceStorage;
+  const sourcePromptRecord: SavedPromptRecord | null = workspace.source ? {
+    id: workspace.source.promptId ?? "temporary-image-workspace-prompt",
+    title: workspace.source.title,
+    createdAt: workspace.lastUpdatedAt ?? new Date().toISOString(),
+    provider: workspace.source.provider ?? settings.provider,
+    model: workspace.source.model ?? settings.imageModel,
+    format: workspace.source.format,
+    content: workspace.prompt,
+    category: "收藏",
+    tags: [],
+    source: workspace.source.type === "temporary" ? "ai-generated" : workspace.source.type
+  } : null;
 
-  const canGenerate = Boolean(
-    isServiceReady && settings.imageModel.trim() && workspace.prompt.trim()
-  );
+  const imageConnection = getImageConnectionSettings(settings);
+  const imageConfigurationMessage = !imageConnection.apiKey
+    ? "未配置生图 API Key，请前往设置页补充"
+    : !imageConnection.baseUrl
+      ? "未配置生图 Base URL，请前往设置页补充"
+      : !settings.imageModel.trim()
+        ? "未配置生图模型，请前往设置页补充"
+        : "";
+  const canGenerate = Boolean(!imageConfigurationMessage && workspace.prompt.trim());
 
   useEffect(() => {
-    void getImageTask().then((task) => {
-      if (task.status === "running") {
+    const applyTaskState = (task: Awaited<ReturnType<typeof getImageTask>>) => {
+      if (task.status === "submitting" || task.status === "generating") {
         setIsGenerating(true);
-      } else if (task.status === "done" && task.result) {
+        return;
+      }
+      if ((task.status === "success" || task.status === "error") && task.result) {
         setGenerationResult(task.result);
         setIsGenerating(false);
-        void clearImageTask();
+        return;
       }
-    });
-  }, []);
+      if (task.status === "error" && task.errorMessage) {
+        const friendly = toUserFacingError(task.errorMessage);
+        setGenerationResult({
+          ok: false,
+          provider: settings.provider,
+          model: settings.imageModel,
+          generatedAt: task.finishedAt ?? new Date().toISOString(),
+          message: friendly.message
+        });
+      }
+      setIsGenerating(false);
+    };
+
+    void getImageTask().then(applyTaskState);
+    return subscribeImageTask(applyTaskState);
+  }, [settings.imageModel, settings.provider]);
 
   const handleGenerate = async () => {
-    if (isGenerating) return;
+    if (generationLockRef.current || isGenerating) return;
+    generationLockRef.current = true;
     setIsGenerating(true);
-    setGenerationResult(null);
-    await startImageTask();
 
     try {
+      await startImageTask();
       const result = await sendRuntimeMessageLong<ImageGenerationResult>(
         {
           type: "image:generate",
@@ -105,8 +162,7 @@ export function ImageStudio(props: {
         },
         async () => {
           const task = await getImageTask();
-          if (task.status === "done" && task.result) {
-            void clearImageTask();
+          if ((task.status === "success" || task.status === "error") && task.result) {
             return task.result;
           }
           return null;
@@ -114,9 +170,45 @@ export function ImageStudio(props: {
       );
 
       setGenerationResult(result);
-      await clearImageTask();
 
       if (result.ok) {
+        let linkedRecord: SavedPromptRecord | null = null;
+        let resolvedSource = workspace.source;
+        if (workspace.source?.promptId) {
+          const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+          linkedRecord = records.find((record) => record.id === workspace.source?.promptId) ?? null;
+        } else if (workspace.source?.type === "temporary") {
+          linkedRecord = await savePromptToFavorites({
+            provider: workspace.source.provider ?? result.provider,
+            model: workspace.source.model ?? result.model,
+            format: workspace.source.format,
+            content: workspace.prompt,
+            title: workspace.source.title,
+            category: "收藏/其他",
+            source: "ai-generated",
+            isFavorite: false
+          });
+          resolvedSource = { ...workspace.source, promptId: linkedRecord.id, type: "ai-generated" };
+          await setWorkspace({ ...workspace, source: resolvedSource, lastUpdatedAt: new Date().toISOString() });
+        }
+
+        if (linkedRecord) {
+          const newLinks: PromptLinkedImage[] = result.images.map((image) => ({
+            imageId: image.id,
+            imageUrl: image.url,
+            model: result.model,
+            ratio: settings.imageAspectRatio,
+            resolution: settings.imageResolution,
+            createdAt: result.generatedAt
+          }));
+          const mergedLinks = [...(linkedRecord.linkedImages ?? []), ...newLinks].filter((item, index, all) => {
+            const key = typeof item === "string" ? item : item.imageId ?? item.imageUrl;
+            return all.findIndex((candidate) => (typeof candidate === "string" ? candidate : candidate.imageId ?? candidate.imageUrl) === key) === index;
+          });
+          linkedRecord = await updateFavoritePrompt(linkedRecord.id, { linkedImages: mergedLinks });
+          if (linkedRecord) setPreviewPromptRecord((current) => current?.id === linkedRecord?.id ? linkedRecord : current);
+        }
+
         const historyEntries: ImageHistoryEntry[] = result.images.map((image) => ({
           id: image.id,
           url: image.url,
@@ -127,14 +219,26 @@ export function ImageStudio(props: {
           aspectRatio: settings.imageAspectRatio,
           count: settings.imageCount,
           generatedAt: result.generatedAt,
-          revisedPrompt: image.revisedPrompt
+          revisedPrompt: image.revisedPrompt,
+          promptId: linkedRecord?.id ?? resolvedSource?.promptId,
+          promptTitle: linkedRecord?.title ?? resolvedSource?.title,
+          promptSource: resolvedSource
         }));
         const updatedHistory = await addImageHistoryEntries(historyEntries);
         setImageHistory(updatedHistory);
       }
     } catch (error) {
-      await clearImageTask();
+      const friendly = toUserFacingError(error);
+      await failImageTask(friendly.technicalDetails);
+      setGenerationResult({
+        ok: false,
+        provider: settings.provider,
+        model: settings.imageModel,
+        generatedAt: new Date().toISOString(),
+        message: friendly.message
+      });
     } finally {
+      generationLockRef.current = false;
       setIsGenerating(false);
     }
   };
@@ -172,17 +276,79 @@ export function ImageStudio(props: {
     }
   };
 
+  const openPromptAsset = async (promptId?: string) => {
+    if (!promptId) {
+      setPreviewPromptRecord(sourcePromptRecord);
+      return;
+    }
+    const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+    const record = records.find((item) => item.id === promptId);
+    if (record) setPreviewPromptRecord(record);
+    else showToast("对应 Prompt 资产已不存在");
+  };
+
+  const saveCurrentPrompt = async () => {
+    if (!workspace.prompt.trim()) return;
+    if (workspace.source?.promptId) {
+      showToast("该 Prompt 已在提示词库中");
+      return;
+    }
+    const record = await savePromptToFavorites({
+      provider: workspace.source?.provider ?? settings.provider,
+      model: workspace.source?.model ?? settings.imageModel,
+      format: workspace.source?.format ?? "cnPrompt",
+      content: workspace.prompt,
+      title: workspace.source?.title || workspace.prompt.slice(0, 28),
+      category: "收藏/其他",
+      source: workspace.source?.type === "temporary" ? "ai-generated" : workspace.source?.type === "ai-generated" || workspace.source?.type === "system-template" ? workspace.source.type : "user-created",
+      isFavorite: true
+    });
+    await setWorkspace({
+      ...workspace,
+      source: {
+        promptId: record.id,
+        title: record.title,
+        type: record.source ?? "user-created",
+        format: record.format,
+        provider: record.provider,
+        model: record.model
+      },
+      lastUpdatedAt: new Date().toISOString()
+    });
+    showToast("已保存到提示词库");
+  };
+
+  const restoreHistoryEntry = async (entry: ImageHistoryEntry) => {
+    await setWorkspace({ prompt: entry.prompt, lastUpdatedAt: new Date().toISOString(), source: entry.promptSource });
+    await updateSettings({
+      ...settings,
+      imageModel: entry.model || settings.imageModel,
+      imageResolution: entry.resolution as ExtensionSettings["imageResolution"],
+      imageAspectRatio: entry.aspectRatio as ExtensionSettings["imageAspectRatio"],
+      imageCount: entry.count as ExtensionSettings["imageCount"]
+    });
+    showToast("已恢复此次创作环境");
+  };
+
   return (
-    <div className="space-y-4">
-      <section className="glass-card p-4">
-        <div>
-          <div className="section-label">图像生成区</div>
+    <div className="image-workbench">
+      <section className="image-compose-card">
+        <div className="image-workbench-heading">
+          <div className="section-label">AI 图像生成</div>
           <div className="section-hint">
-            可接收角色设定页自动带入的提示词
+            调整生成参数，完善提示词，然后开始创作。
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-3">
+        {workspace.source ? (
+          <WorkflowConnector
+            title={workspace.source.title}
+            sourceLabel={workspace.source.type === "temporary" ? "临时 Prompt" : workspace.source.type === "ai-generated" ? "AI 生成" : workspace.source.type === "system-template" ? "系统模板" : "用户创建"}
+            onView={() => { void openPromptAsset(workspace.source?.promptId); }}
+          />
+        ) : null}
+
+        <div className="image-parameter-bar">
           <label className="block">
             <span className="mb-1.5 block text-xs text-white/50">图像比例</span>
             <div className="relative">
@@ -248,22 +414,23 @@ export function ImageStudio(props: {
           value={workspace.prompt}
           onChange={(event) => {
             void setWorkspace({
+              ...workspace,
               prompt: event.target.value,
               lastUpdatedAt: new Date().toISOString()
             });
           }}
           placeholder="输入用于生图的最终提示词，或先在角色设定页生成后自动带入。"
-          className="form-field mt-4 min-h-[120px] w-full resize-y leading-6"
+          className="form-field image-prompt-input"
         />
 
-        <div className="mt-4 flex flex-wrap gap-3">
+        <div className="image-generate-actions">
           <button
             type="button"
             onClick={() => {
               void handleGenerate();
             }}
             disabled={!canGenerate || isGenerating}
-            className="gradient-button"
+            className="gradient-button image-generate-button"
           >
             {isGenerating ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -279,52 +446,43 @@ export function ImageStudio(props: {
               onClick={() => {
                 void handleCancel();
               }}
-              className="ghost-button border-rose-400/30 bg-rose-400/10 text-rose-300 hover:text-rose-200"
+              className="ghost-button image-cancel-button border-rose-400/30 bg-rose-400/10 text-rose-300 hover:text-rose-200"
             >
               <X className="h-4 w-4" />
               取消生图
             </button>
           ) : null}
 
-          {generationResult?.ok ? (
-            <button
-              type="button"
-              onClick={() => {
-                void handleDownload(
-                  generationResult.images.map((image) => image.url)
-                );
-              }}
-              disabled={isDownloadingAll}
-              className="ghost-button"
-            >
-              <Download className="h-4 w-4" />
-              {isDownloadingAll ? "下载中..." : "一键下载所有图片"}
-            </button>
-          ) : null}
         </div>
 
-        {!isServiceReady ? (
+        {imageConfigurationMessage ? (
           <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 px-4 py-4 text-sm leading-6 text-white/58">
-            请先在配置中心完成连接配置
+            {imageConfigurationMessage}
           </div>
         ) : null}
-        <p className="mt-3 text-xs text-white/30">
-          编辑提示词或从角色设定页自动带入
-        </p>
       </section>
 
-      <section className="glass-card p-4">
-        <div className="section-label">生成结果</div>
-        <div className="section-hint">
-          点击图片预览，支持单张或批量下载
+      <section className="image-results-panel">
+        <div className="image-results-heading">
+          <div>
+            <div className="section-label">生成结果</div>
+            <div className="section-hint">点击图片预览，支持单张或批量下载</div>
+          </div>
+          {generationResult?.ok ? <div className="image-asset-actions"><button type="button" disabled={isDownloadingAll} onClick={() => void handleDownload(generationResult.images.map((image) => image.url))}><Download className="h-4 w-4" />{isDownloadingAll ? "保存中" : "保存作品"}</button><button type="button" onClick={() => void saveCurrentPrompt()}><Save className="h-4 w-4" />保存 Prompt</button></div> : null}
         </div>
 
         {isGenerating ? (
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            {Array.from({ length: Math.max(2, settings.imageCount) }).map((_, index) => (
+          <div className="image-generation-status" role="status" aria-live="polite">
+            {generationResult ? "正在生成，将在当前结果区域更新" : "正在生成图片"}
+          </div>
+        ) : null}
+
+        {isGenerating && !generationResult ? (
+          <div className="image-results-grid">
+            {Array.from({ length: settings.imageCount }).map((_, index) => (
               <div
                 key={`skeleton-${index + 1}`}
-                className="aspect-square animate-pulse rounded-[1.35rem] border border-white/10 bg-white/[0.07]"
+                className={`${getGalleryAspectClass(settings.imageAspectRatio)} animate-pulse rounded-[var(--radius-large)] border border-white/10 bg-white/[0.07]`}
               />
             ))}
           </div>
@@ -332,12 +490,29 @@ export function ImageStudio(props: {
 
         {generationResult && !generationResult.ok ? (
           <div className="mt-4 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-sm text-rose-200">
-            {generationResult.message}
+            <p>{generationResult.message}</p>
+            <button type="button" className="ghost-button mt-3 px-3 py-2 text-xs" onClick={() => { void handleGenerate(); }}>
+              重试生成
+            </button>
+            {generationResult.technicalDetails && generationResult.technicalDetails !== generationResult.message ? (
+              <div className="mt-3 text-xs text-white/55">
+                <button type="button" className="inline-flex items-center gap-1" aria-expanded={showTechnicalDetails} onClick={() => setShowTechnicalDetails((current) => !current)}>
+                  查看技术详情 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showTechnicalDetails ? "rotate-180" : ""}`} />
+                </button>
+                <AnimatePresence initial={false}>
+                  {showTechnicalDetails ? (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: shouldReduceMotion ? 0 : MOTION.fastMs / 1000, ease: MOTION.easeOut }} className="overflow-hidden">
+                      <pre className="mt-2 whitespace-pre-wrap break-words">{generationResult.technicalDetails}</pre>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
         {generationResult?.ok ? (
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="image-results-grid">
             {generationResult.images.map((image) => (
               <article
                 key={image.id}
@@ -347,11 +522,22 @@ export function ImageStudio(props: {
                   <img
                     src={image.url}
                     alt="Generated prompt art"
-                    className="aspect-square w-full object-cover transition duration-300 group-hover:scale-[1.025]"
+                    loading="lazy"
+                    decoding="async"
+                    className={`${getGalleryAspectClass(settings.imageAspectRatio)} generated-image-reveal w-full object-cover transition duration-300 group-hover:scale-[1.015]`}
                     onClick={() => {
                       setPreviewImage(image);
                     }}
                   />
+                  {workspace.source?.promptId ? (
+                    <button
+                      type="button"
+                      className="image-prompt-source-badge"
+                      onClick={(event) => { event.stopPropagation(); void openPromptAsset(workspace.source?.promptId); }}
+                    >
+                      来自 Prompt
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -359,7 +545,7 @@ export function ImageStudio(props: {
                       void handleDownload([image.url], image.id);
                     }}
                     disabled={downloadingId === image.id}
-                    className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-xl border border-white/10 bg-black/55 px-3 py-2 text-xs text-white/85 shadow-[0_10px_26px_rgba(0,0,0,0.32)] backdrop-blur transition hover:border-accent/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    className="absolute bottom-3 right-3 inline-flex items-center gap-1 rounded-xl border border-white/10 bg-black/55 px-3 py-2 text-xs text-white/85 shadow-[0_10px_26px_rgba(0,0,0,0.32)] backdrop-blur transition hover:border-accent/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Download className="h-3.5 w-3.5" />
                     {downloadingId === image.id ? "下载中" : "下载"}
@@ -382,89 +568,28 @@ export function ImageStudio(props: {
         ) : null}
       </section>
 
-      <section className="glass-card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setShowHistory((v) => !v);
-            }}
-            className="flex items-center gap-2 text-sm font-medium text-white/88 transition hover:text-white"
-          >
-            历史记录
-            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-white/45">
-              {imageHistory.length}
-            </span>
-            <ChevronDown
-              className={[
-                "h-4 w-4 text-white/40 transition-transform",
-                showHistory ? "rotate-180" : ""
-              ].join(" ")}
-            />
-          </button>
-          {imageHistory.length > 0 ? (
-            <button
-              type="button"
-              onClick={async () => {
-                await clearImageHistory();
-                setImageHistory([]);
-              }}
-              className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-white/55 transition hover:border-rose-400/30 hover:text-rose-300"
-            >
-              清空记录
-            </button>
-          ) : null}
-        </div>
+      <PromptHistoryPanel
+        entries={imageHistory}
+        open={showHistory}
+        onToggle={() => setShowHistory((current) => !current)}
+        onClear={() => { void clearImageHistory().then(() => setImageHistory([])); }}
+        onRestore={(entry) => { void restoreHistoryEntry(entry); }}
+        onDownload={(entry) => { void handleDownload([entry.url], entry.id); }}
+        onViewPrompt={(entry) => { void openPromptAsset(entry.promptId); }}
+      />
 
-        {showHistory ? (
-          imageHistory.length === 0 ? (
-            <div className="mt-3 rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-6 text-xs leading-5 text-white/40">
-              暂无历史记录，生成图片后会自动保存在这里。
-            </div>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {imageHistory.slice(0, 20).map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/25 p-2"
-                >
-                  <img
-                    src={entry.url}
-                    alt=""
-                    className="h-12 w-12 shrink-0 rounded-xl object-cover"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs text-white/70">
-                      {entry.prompt.slice(0, 40)}{entry.prompt.length > 40 ? "..." : ""}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[10px] text-white/35">
-                      <span>{entry.aspectRatio}</span>
-                      <span>·</span>
-                      <span>{entry.resolution}</span>
-                      <span>·</span>
-                      <span>{new Date(entry.generatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleDownload([entry.url], entry.id);
-                    }}
-                    className="shrink-0 rounded-xl border border-white/10 bg-white/[0.06] p-2 text-white/50 transition hover:border-accent/30 hover:text-white"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-              {imageHistory.length > 20 ? (
-                <div className="text-center text-xs text-white/35">
-                  仅展示最近 20 条，共 {imageHistory.length} 条记录
-                </div>
-              ) : null}
-            </div>
-          )
-        ) : null}
-      </section>
+      <PromptPreviewModal
+        record={previewPromptRecord}
+        isCopied={false}
+        isFavorite={Boolean(previewPromptRecord?.isFavorite)}
+        sourceLabel={previewPromptRecord?.id === "temporary-image-workspace-prompt" ? "临时 Prompt" : undefined}
+        showLibraryActions={false}
+        allowEditing={false}
+        onClose={() => setPreviewPromptRecord(null)}
+        onCopy={() => { if (previewPromptRecord) void navigator.clipboard.writeText(previewPromptRecord.content).then(() => showToast("提示词已复制")); }}
+        onSave={() => undefined}
+        onToggleFavorite={() => { void saveCurrentPrompt(); }}
+      />
 
       {previewImage ? (
         <div

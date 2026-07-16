@@ -11,12 +11,11 @@ export const defaultImageWorkspaceState: ImageWorkspaceState = {
   lastUpdatedAt: null
 };
 
-export async function saveImageWorkspacePrompt(prompt: string) {
+export async function saveImageWorkspace(input: ImageWorkspaceState) {
   const nextState: ImageWorkspaceState = {
-    prompt,
+    ...input,
     lastUpdatedAt: new Date().toISOString()
   };
-
   await storageSet(IMAGE_STORAGE_KEYS.workspace, nextState);
   return nextState;
 }
