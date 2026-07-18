@@ -1,6 +1,6 @@
 import type { ImageGenerationResult } from "../types/image";
 import type { PromptGenerationResult } from "../types/prompt";
-import { storageGet, storageSet, subscribeStorage } from "./storage";
+import { sessionStorageGet, sessionStorageSet, storageGet, storageSet, subscribeSessionStorage, subscribeStorage } from "./storage";
 
 export const IMAGE_TASK_KEY = "prompt-butler-image-task";
 export const PROMPT_TASK_KEY = "prompt-butler-prompt-task";
@@ -99,32 +99,35 @@ async function failTask<T>(key: string, fallback: TaskState<T>, message: string)
 
 export async function startImageTask() {
   const task = createRunningTask<ImageGenerationResult>();
-  await storageSet(IMAGE_TASK_KEY, task);
+  await sessionStorageSet(IMAGE_TASK_KEY, task);
   return task.taskId;
 }
 
 export async function markImageTaskGenerating(workerSessionId: string) {
-  await markTaskGenerating(IMAGE_TASK_KEY, idleImageTask, workerSessionId);
+  const current = await sessionStorageGet(IMAGE_TASK_KEY, idleImageTask);
+  await sessionStorageSet(IMAGE_TASK_KEY, { ...current, status: "generating", workerSessionId, errorMessage: null });
 }
 
 export async function finishImageTask(result: ImageGenerationResult) {
-  await finishTask(IMAGE_TASK_KEY, idleImageTask, result);
+  const current = await sessionStorageGet(IMAGE_TASK_KEY, idleImageTask);
+  await sessionStorageSet(IMAGE_TASK_KEY, { ...current, status: result.ok ? "success" : "error", workerSessionId: null, finishedAt: new Date().toISOString(), result, errorMessage: result.ok ? null : result.message });
 }
 
 export async function failImageTask(message: string) {
-  await failTask(IMAGE_TASK_KEY, idleImageTask, message);
+  const current = await sessionStorageGet(IMAGE_TASK_KEY, idleImageTask);
+  await sessionStorageSet(IMAGE_TASK_KEY, { ...current, status: "error", workerSessionId: null, finishedAt: new Date().toISOString(), result: null, errorMessage: message });
 }
 
 export async function getImageTask(): Promise<ImageTaskState> {
-  return storageGet(IMAGE_TASK_KEY, idleImageTask);
+  return sessionStorageGet(IMAGE_TASK_KEY, idleImageTask);
 }
 
 export function subscribeImageTask(handler: (task: ImageTaskState) => void) {
-  return subscribeStorage(IMAGE_TASK_KEY, idleImageTask, handler);
+  return subscribeSessionStorage(IMAGE_TASK_KEY, idleImageTask, handler);
 }
 
 export async function clearImageTask() {
-  await storageSet(IMAGE_TASK_KEY, idleImageTask);
+  await sessionStorageSet(IMAGE_TASK_KEY, idleImageTask);
 }
 
 export async function startPromptTask() {

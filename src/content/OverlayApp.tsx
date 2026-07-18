@@ -29,6 +29,7 @@ import { showToast, subscribeToast, type ToastEvent } from "../lib/toast";
 import type { SavedPromptRecord } from "../types/prompt";
 import { MOTION } from "../lib/motion";
 import iconAssetPath from "../../icons/icon48.png";
+import { migrateLegacyPromptImages } from "../lib/example-images";
 
 interface OverlayAppProps {
   embedded?: boolean;
@@ -120,6 +121,12 @@ export function OverlayApp({
     void cleanupInvalidTabs().then(() => {
       void getCustomTabs().then(setCustomTabs);
       void getVisibleTabs().then(setVisibleTabs);
+    });
+  }, []);
+
+  useEffect(() => {
+    void migrateLegacyPromptImages().catch((error) => {
+      console.warn("[Prompt Butler] 旧图片数据迁移未完成：", error);
     });
   }, []);
 

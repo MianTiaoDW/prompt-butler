@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Check, ChevronDown, Copy, Heart, Image, PencilLine, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Copy, Eye, Heart, Image, PencilLine, Plus, Sparkles, Trash2, X } from "lucide-react";
 
-import type { PromptLinkedImage, PromptOutputFormat, SavedPromptRecord } from "../types/prompt";
+import type { PromptOutputFormat, SavedPromptRecord } from "../types/prompt";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { MOTION } from "../lib/motion";
+import { ImagePreviewModal } from "./ImagePreviewModal";
+import { dataUrlToObjectUrl, deleteExampleImageAsset, getExampleImagePayload, MAX_EXAMPLE_IMAGES, saveExampleImage } from "../lib/example-images";
+import { updateFavoritePrompt } from "../lib/prompt-library";
+import { showToast } from "../lib/toast";
 
 interface PromptPreviewModalProps {
   record: SavedPromptRecord | null;
@@ -27,15 +31,6 @@ const sectionLabels: Record<PromptOutputFormat, string> = {
   structuredPrompt: "高级结构 JSON"
 };
 
-function formatCaseDate(value: string) {
-  const date = new Date(value);
-  const today = new Date();
-  const dayDiff = Math.floor((new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86400000);
-  if (dayDiff === 0) return "今天";
-  if (dayDiff === 1) return "昨天";
-  return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
-}
-
 export function PromptPreviewModal({
   record,
   isCopied,
@@ -53,19 +48,103 @@ export function PromptPreviewModal({
   const [expandedSections, setExpandedSections] = useState<PromptOutputFormat[]>(["cnPrompt"]);
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
-  const [previewLinkedImage, setPreviewLinkedImage] = useState<PromptLinkedImage | null>(null);
+  const [exampleIds, setExampleIds] = useState<string[]>([]);
+  const [exampleUrls, setExampleUrls] = useState<Record<string, string | null>>({});
+  const [previewExample, setPreviewExample] = useState<{ id: string; url: string } | null>(null);
+  const [replaceMode, setReplaceMode] = useState(false);
+  const replaceIndexRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const shouldReduceMotion = useReducedMotion();
   const dialogRef = useModalFocus<HTMLElement>(Boolean(record), onClose);
-  const imageDialogRef = useModalFocus<HTMLDivElement>(Boolean(previewLinkedImage), () => setPreviewLinkedImage(null));
-  const linkedImages = record?.linkedImages?.filter((item): item is PromptLinkedImage => typeof item !== "string" && Boolean(item.imageUrl)) ?? [];
 
   useEffect(() => {
     if (!record) return;
     setDraftContent(record.content);
     setIsEditing(false);
-    setPreviewLinkedImage(null);
+    setPreviewExample(null);
+    setExampleIds((record.exampleImageIds ?? []).slice(0, MAX_EXAMPLE_IMAGES));
+    setReplaceMode(false);
     setExpandedSections(["cnPrompt"]);
   }, [record]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const objectUrls: string[] = [];
+    setExampleUrls({});
+    void Promise.all(exampleIds.map(async (id) => {
+      try {
+        const payload = await getExampleImagePayload(id);
+        if (!payload) return [id, null] as const;
+        const url = dataUrlToObjectUrl(payload.dataUrl);
+        objectUrls.push(url);
+        return [id, url] as const;
+      } catch {
+        return [id, null] as const;
+      }
+    })).then((entries) => { if (!cancelled) setExampleUrls(Object.fromEntries(entries)); });
+    return () => {
+      cancelled = true;
+      for (const url of objectUrls) URL.revokeObjectURL(url);
+    };
+  }, [exampleIds]);
+
+  const persistIds = async (ids: string[]) => {
+    setExampleIds(ids);
+    await updateFavoritePrompt(record!.id, { exampleImageIds: ids, imageStorageVersion: 2, linkedImages: [] });
+  };
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files?.length || !record) return;
+    const replacementIndex = replaceIndexRef.current;
+    replaceIndexRef.current = null;
+    try {
+      const available = replacementIndex === null ? MAX_EXAMPLE_IMAGES - exampleIds.length : 1;
+      if (files.length > available) throw new Error(`最多还能添加 ${available} 张示例图，请重新选择。`);
+      const selected = Array.from(files).slice(0, available);
+      if (selected.length === 0) throw new Error("已达到 3 张上限，请先选择要替换的图片。");
+      const nextIds = [...exampleIds];
+      for (const file of selected) {
+        const targetIndex = replacementIndex ?? nextIds.length;
+        const saved = await saveExampleImage({ promptId: record.id, image: file, source: "upload", sortOrder: targetIndex, replaceImageId: replacementIndex === null ? undefined : nextIds[replacementIndex] });
+        if (replacementIndex !== null) {
+          if (nextIds.some((id, index) => id === saved.image.id && index !== replacementIndex)) {
+            throw new Error("这张图片已经存在于当前 Prompt 的示例图中。");
+          }
+          const oldId = nextIds[replacementIndex];
+          nextIds[replacementIndex] = saved.image.id;
+          if (oldId && oldId !== saved.image.id) await deleteExampleImageAsset(oldId);
+        } else if (!nextIds.includes(saved.image.id)) nextIds.push(saved.image.id);
+      }
+      await persistIds(nextIds.slice(0, MAX_EXAMPLE_IMAGES));
+      setReplaceMode(false);
+      showToast("示例图已添加");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "示例图上传失败。");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const replaceAt = (index: number) => {
+    replaceIndexRef.current = index;
+    fileInputRef.current?.click();
+  };
+
+  const deleteAt = async (index: number) => {
+    const imageId = exampleIds[index];
+    await deleteExampleImageAsset(imageId);
+    await persistIds(exampleIds.filter((_, itemIndex) => itemIndex !== index));
+    setPreviewExample(null);
+    showToast("示例图已删除");
+  };
+
+  const moveImage = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= exampleIds.length) return;
+    const next = [...exampleIds];
+    [next[index], next[target]] = [next[target], next[index]];
+    await persistIds(next);
+  };
 
   const toggleSection = (format: PromptOutputFormat) => {
     setExpandedSections((current) =>
@@ -151,17 +230,31 @@ export function PromptPreviewModal({
                 );
               })}
               <section className="prompt-preview-cases">
-                <div className="prompt-preview-cases-heading"><span>生成案例</span><small>{linkedImages.length}</small></div>
-                {linkedImages.length > 0 ? (
-                  <div className="prompt-case-masonry">
-                    {linkedImages.map((image, index) => (
-                      <button key={image.imageId ?? `${image.imageUrl}-${index}`} type="button" onClick={() => setPreviewLinkedImage(image)}>
-                        <img src={image.imageUrl} alt={`${record.title || "Prompt"} 生成案例`} loading="lazy" decoding="async" />
-                        <span><strong>{image.model}</strong><small>{image.ratio} · {formatCaseDate(image.createdAt)}</small></span>
-                      </button>
-                    ))}
+                <div className="prompt-preview-cases-heading"><span>示例效果 {exampleIds.length}/3</span></div>
+                {exampleIds.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-3">
+                    {exampleIds.map((imageId, index) => {
+                      const url = exampleUrls[imageId];
+                      return (
+                        <div key={imageId} className={`group relative aspect-[4/3] overflow-hidden rounded-xl border ${replaceMode ? "border-accent/50" : "border-white/10"} bg-black/25`}>
+                          {url ? <img src={url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" onError={() => setExampleUrls((current) => ({ ...current, [imageId]: null }))} /> : <div className="flex h-full items-center justify-center px-2 text-center text-xs text-white/45">{url === undefined ? "加载中…" : <>图片不可用<br />请重新上传</>}</div>}
+                          <div className="absolute inset-0 flex items-center justify-center gap-1 bg-black/65 opacity-0 transition group-hover:opacity-100">
+                            {replaceMode ? <button type="button" className="ghost-button px-2 py-1 text-xs" onClick={() => replaceAt(index)}>替换此图</button> : <>
+                              {url ? <button type="button" aria-label="查看" onClick={() => setPreviewExample({ id: imageId, url })}><Eye className="h-4 w-4" /></button> : <button type="button" onClick={() => replaceAt(index)}><Plus className="h-4 w-4" /></button>}
+                              <button type="button" aria-label="左移" disabled={index === 0} onClick={() => void moveImage(index, -1)}><ArrowLeft className="h-4 w-4" /></button>
+                              <button type="button" aria-label="右移" disabled={index === exampleIds.length - 1} onClick={() => void moveImage(index, 1)}><ArrowRight className="h-4 w-4" /></button>
+                              <button type="button" aria-label="删除" onClick={() => void deleteAt(index)}><Trash2 className="h-4 w-4" /></button>
+                            </>}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                ) : <p>这个 Prompt 还没有关联生成案例。</p>}
+                ) : <p>暂无示例图<br />上传效果图，方便以后快速判断这个 Prompt 的实际生成效果。</p>}
+                <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple={exampleIds.length < MAX_EXAMPLE_IMAGES} className="hidden" onChange={(event) => void handleFiles(event.target.files)} />
+                <button type="button" className="ghost-button mt-3 px-3 py-2 text-xs" onClick={() => exampleIds.length >= MAX_EXAMPLE_IMAGES ? setReplaceMode((value) => !value) : fileInputRef.current?.click()}>
+                  <Plus className="h-3.5 w-3.5" />{exampleIds.length >= MAX_EXAMPLE_IMAGES ? (replaceMode ? "取消替换" : "替换示例图") : "上传示例图"}
+                </button>
               </section>
             </div>
 
@@ -184,12 +277,10 @@ export function PromptPreviewModal({
               {onOptimize ? <button type="button" className="prompt-preview-primary" onClick={onOptimize}><Sparkles className="h-4 w-4" />AI 优化 Prompt</button> : null}
             </footer>
           </motion.section>
-          {previewLinkedImage ? (
-            <div ref={imageDialogRef} role="dialog" aria-modal="true" aria-label="生成案例大图预览" tabIndex={-1} className="prompt-case-preview" onMouseDown={(event) => { event.stopPropagation(); setPreviewLinkedImage(null); }}>
-              <img src={previewLinkedImage.imageUrl} alt="生成案例大图预览" />
-              <div><strong>{previewLinkedImage.model}</strong><span>{previewLinkedImage.ratio} · {previewLinkedImage.resolution} · {formatCaseDate(previewLinkedImage.createdAt)}</span></div>
-            </div>
-          ) : null}
+          <ImagePreviewModal
+            image={previewExample ? { ...previewExample, alt: "示例图大图预览" } : null}
+            onClose={() => setPreviewExample(null)}
+          />
         </motion.div>
       ) : null}
     </AnimatePresence>

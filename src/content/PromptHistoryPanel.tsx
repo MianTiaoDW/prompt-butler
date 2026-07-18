@@ -2,8 +2,8 @@ import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ChevronDown, Download, Eye, RotateCcw } from "lucide-react";
 import type { ImageHistoryEntry } from "../types/image";
-import { useModalFocus } from "../hooks/useModalFocus";
 import { MOTION } from "../lib/motion";
+import { ImagePreviewModal } from "./ImagePreviewModal";
 
 export function PromptHistoryPanel(props: {
   entries: ImageHistoryEntry[];
@@ -16,7 +16,6 @@ export function PromptHistoryPanel(props: {
 }) {
   const [previewEntry, setPreviewEntry] = useState<ImageHistoryEntry | null>(null);
   const shouldReduceMotion = useReducedMotion();
-  const previewRef = useModalFocus<HTMLDivElement>(Boolean(previewEntry), () => setPreviewEntry(null));
 
   return (
     <>
@@ -60,34 +59,14 @@ export function PromptHistoryPanel(props: {
         </AnimatePresence>
       </section>
 
-      <AnimatePresence>
-        {previewEntry ? (
-          <motion.div
-            ref={previewRef}
-            tabIndex={-1}
-            className="history-image-preview-backdrop"
-            role="dialog"
-            aria-modal="true"
-            aria-label="历史生成图片预览"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: shouldReduceMotion ? 0.06 : MOTION.modalMs / 1000, ease: MOTION.easeOut }}
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setPreviewEntry(null);
-            }}
-          >
-            <motion.img
-              src={previewEntry.url}
-              alt={previewEntry.promptTitle || "历史生成作品大图预览"}
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ duration: shouldReduceMotion ? 0.06 : MOTION.modalMs / 1000, ease: MOTION.easeOut }}
-            />
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      <ImagePreviewModal
+        image={previewEntry ? {
+          id: previewEntry.id,
+          url: previewEntry.url,
+          alt: previewEntry.promptTitle || "历史生成作品大图预览"
+        } : null}
+        onClose={() => setPreviewEntry(null)}
+      />
     </>
   );
 }

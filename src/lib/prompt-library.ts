@@ -201,6 +201,8 @@ export async function savePromptToFavorites(input: {
     versions: [],
     usedCount: 0,
     linkedImages: [],
+    exampleImageIds: [],
+    imageStorageVersion: 2,
     version: "1.0",
     usageCount: 0,
     lastUsed: "",
@@ -214,7 +216,7 @@ export async function savePromptToFavorites(input: {
 
 export async function updateFavoritePrompt(
   promptId: string,
-  patch: Partial<Pick<SavedPromptRecord, "title" | "content" | "category" | "tags" | "isFavorite" | "isFrequent" | "lastUsedAt" | "versions" | "usedCount" | "linkedImages" | "version" | "usageCount" | "lastUsed" | "source" | "contentVariants">>
+  patch: Partial<Pick<SavedPromptRecord, "title" | "content" | "category" | "tags" | "isFavorite" | "isFrequent" | "lastUsedAt" | "versions" | "usedCount" | "linkedImages" | "exampleImageIds" | "imageStorageVersion" | "version" | "usageCount" | "lastUsed" | "source" | "contentVariants">>
 ) {
   const existing = await storageGet<SavedPromptRecord[]>(
     PROMPT_STORAGE_KEYS.favorites,

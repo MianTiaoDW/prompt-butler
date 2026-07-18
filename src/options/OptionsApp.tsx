@@ -18,8 +18,43 @@ import { useExtensionSettings } from "../hooks/useExtensionSettings";
 import { IMAGE_ASPECT_RATIOS, IMAGE_COUNTS, IMAGE_RESOLUTIONS } from "../types/settings";
 import type { ExtensionSettings } from "../types/settings";
 import type { ConnectionTestResult, ModelDetectionResult } from "../types/runtime";
+import { cleanupExampleImages, getExampleImageUsage } from "../lib/example-images";
+import { storageGet } from "../lib/storage";
+import { PROMPT_STORAGE_KEYS } from "../lib/prompt-library";
+import type { SavedPromptRecord } from "../types/prompt";
 
 type ModelField = "reasoningModel" | "visionModel" | "imageModel";
+
+function formatMegabytes(bytes: number) {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function ExampleImageStorageSettings() {
+  const [usage, setUsage] = useState({ usedBytes: 0, limitBytes: 30 * 1024 * 1024, imageCount: 0 });
+  const [message, setMessage] = useState("");
+  const refresh = () => void getExampleImageUsage().then(setUsage).catch(() => setMessage("无法读取示例图存储状态。"));
+  useEffect(refresh, []);
+  const cleanup = async () => {
+    try {
+      const prompts = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+      const result = await cleanupExampleImages(prompts.map((prompt) => prompt.id));
+      setMessage(result.deleted ? `已清理 ${result.deleted} 条无效图片数据。` : "没有发现无效图片数据。");
+      refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "清理失败，请重试。");
+    }
+  };
+  return (
+    <div className="settings-form-section">
+      <div className="settings-section-heading"><h3>示例图存储</h3><p>只保存用户主动添加的压缩预览图，软上限为 30MB。</p></div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/15 p-4">
+        <div><strong className="text-sm text-primary">已使用 {formatMegabytes(usage.usedBytes)} / {formatMegabytes(usage.limitBytes)}</strong><p className="mt-1 text-xs text-tertiary">共 {usage.imageCount} 张示例图</p></div>
+        <div className="flex gap-2"><button type="button" className="ghost-button px-3 py-2 text-xs" onClick={() => window.open(chrome.runtime.getURL("options.html?view=app"), "_blank")}>管理</button><button type="button" className="ghost-button px-3 py-2 text-xs" onClick={() => void cleanup()}>清理无效数据</button></div>
+      </div>
+      {message ? <p className="mt-2 text-xs text-secondary">{message}</p> : null}
+    </div>
+  );
+}
 
 interface ModelComboboxProps {
   id: string;
@@ -634,6 +669,8 @@ export function OptionsApp() {
                 </label>
               </div>
             </div>
+
+            <ExampleImageStorageSettings />
 
             <div className="settings-actions">
               <button

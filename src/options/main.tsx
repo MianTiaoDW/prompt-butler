@@ -1,22 +1,16 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { OverlayApp } from "../content/OverlayApp";
 import { OptionsApp } from "./OptionsApp";
 import "../styles/tailwind.css";
 
-interface DocumentPictureInPictureController {
-  requestWindow(options?: {
-    width?: number;
-    height?: number;
-    disallowReturnToOpener?: boolean;
-  }): Promise<Window>;
-}
+const WINDOW_NATIVE_HOST = "com.promptbutler.window";
 
-declare global {
-  interface Window {
-    documentPictureInPicture?: DocumentPictureInPictureController;
-  }
+interface NativeWindowResponse {
+  ok: boolean;
+  enabled?: boolean;
+  message?: string;
 }
 
 const rootElement = document.getElementById("root");
@@ -30,71 +24,43 @@ const isAppWindow = new URLSearchParams(window.location.search).get("view") === 
 
 function AppWindow() {
   const [isPinned, setIsPinned] = useState(false);
-  const pictureInPictureWindowRef = useRef<Window | null>(null);
-  const restoreParentRef = useRef<ParentNode | null>(null);
-  const restoreSiblingRef = useRef<ChildNode | null>(null);
 
-  const restoreAppRoot = useCallback(() => {
-    if (appRootElement.ownerDocument === document) return;
-    const restoreParent = restoreParentRef.current ?? document.body;
-    const restoreSibling = restoreSiblingRef.current;
-    if (restoreSibling?.parentNode === restoreParent) {
-      restoreParent.insertBefore(appRootElement, restoreSibling);
-    } else {
-      restoreParent.appendChild(appRootElement);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    void chrome.runtime.sendNativeMessage(
+      WINDOW_NATIVE_HOST,
+      { type: "window:get-always-on-top" }
+    ).then((response: NativeWindowResponse) => {
+      if (!cancelled && response.ok) {
+        setIsPinned(response.enabled === true);
+      }
+    }).catch(() => {
+      // 安装程序不可用时保持默认状态，用户点击置顶后再给出明确反馈。
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handlePinnedChange = useCallback(async (nextPinned: boolean) => {
-    if (!nextPinned) {
-      restoreAppRoot();
-      pictureInPictureWindowRef.current?.close();
-      pictureInPictureWindowRef.current = null;
-      setIsPinned(false);
-      return true;
-    }
-
-    const controller = window.documentPictureInPicture;
-    if (!controller) return false;
-
     try {
-      const pictureInPictureWindow = await controller.requestWindow({
-        width: Math.max(420, window.innerWidth),
-        height: Math.max(620, window.innerHeight),
-        disallowReturnToOpener: true
-      });
-
-      restoreParentRef.current = appRootElement.parentNode;
-      restoreSiblingRef.current = appRootElement.nextSibling;
-
-      for (const styleNode of document.head.querySelectorAll('link[rel="stylesheet"], style')) {
-        pictureInPictureWindow.document.head.appendChild(styleNode.cloneNode(true));
+      const response = await chrome.runtime.sendNativeMessage(
+        WINDOW_NATIVE_HOST,
+        { type: "window:set-always-on-top", enabled: nextPinned }
+      ) as NativeWindowResponse;
+      if (!response.ok || response.enabled !== nextPinned) {
+        console.error("[Prompt Butler] 窗口置顶操作失败：", response.message);
+        return false;
       }
-
-      pictureInPictureWindow.document.documentElement.style.width = "100%";
-      pictureInPictureWindow.document.documentElement.style.height = "100%";
-      pictureInPictureWindow.document.body.style.width = "100%";
-      pictureInPictureWindow.document.body.style.height = "100%";
-      pictureInPictureWindow.document.body.style.margin = "0";
-      pictureInPictureWindow.document.body.style.overflow = "hidden";
-      pictureInPictureWindow.document.body.appendChild(appRootElement);
-
-      pictureInPictureWindowRef.current = pictureInPictureWindow;
-      pictureInPictureWindow.addEventListener("pagehide", () => {
-        restoreAppRoot();
-        pictureInPictureWindowRef.current = null;
-        setIsPinned(false);
-      }, { once: true });
-      setIsPinned(true);
+      setIsPinned(response.enabled);
       return true;
     } catch (error) {
-      console.error("[Prompt Butler] 无法置顶工作台窗口：", error);
+      console.error("[Prompt Butler] 无法连接窗口置顶组件：", error);
       return false;
     }
-  }, [restoreAppRoot]);
+  }, []);
 
   const closeAppWindow = useCallback(() => {
-    pictureInPictureWindowRef.current?.close();
     window.close();
   }, []);
 

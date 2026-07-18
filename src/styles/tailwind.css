@@ -36,6 +36,8 @@
     --accent-pressed: #35d972;
     --accent-soft: rgba(82, 242, 139, 0.1);
     --accent-border: rgba(82, 242, 139, 0.28);
+    --selection-background: #8ff3b2;
+    --selection-foreground: #07120b;
     --status-online: #52f28b;
     --status-warning: #d4a72c;
     --status-error: #f87171;
@@ -54,7 +56,6 @@
     --shadow-core: 0 12px 20px rgba(0, 0, 0, 0.2);
     --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.42);
     --overlay-backdrop: rgba(0, 0, 0, 0.68);
-    --overlay-image-preview: rgba(0, 0, 0, 0.88);
     --bg-image-source-badge: rgba(9, 9, 11, 0.76);
     --scrollbar-thumb: rgba(255, 255, 255, 0.18);
     --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
@@ -245,8 +246,9 @@
   }
 
   ::selection {
-    background: var(--accent-soft);
-    color: var(--text-primary);
+    background: var(--selection-background);
+    color: var(--selection-foreground);
+    text-shadow: none;
   }
 }
 
@@ -2117,37 +2119,6 @@
     font-size: 9px;
   }
 
-  .prompt-case-preview {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    display: grid;
-    place-items: center;
-    padding: var(--space-6);
-    background: var(--overlay-image-preview);
-  }
-
-  .prompt-case-preview img {
-    max-width: 100%;
-    max-height: calc(100% - 52px);
-    border-radius: var(--radius-large);
-    object-fit: contain;
-    box-shadow: var(--shadow-modal);
-  }
-
-  .prompt-case-preview > div {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    margin-top: var(--space-3);
-    color: var(--text-secondary);
-    font-size: 11px;
-  }
-
-  .prompt-case-preview strong {
-    color: var(--text-primary);
-  }
-
   .prompt-preview-section > p {
     color: var(--text-tertiary);
     font-size: 13px;
@@ -2635,26 +2606,6 @@
   .prompt-history-thumbnail:focus-visible {
     outline: 1px solid var(--accent-primary);
     outline-offset: 2px;
-  }
-
-  .history-image-preview-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: grid;
-    place-items: center;
-    padding: var(--space-6);
-    background: var(--overlay-image-preview);
-    cursor: zoom-out;
-  }
-
-  .history-image-preview-backdrop > img {
-    max-width: 84%;
-    max-height: 84%;
-    border-radius: var(--radius-large);
-    box-shadow: var(--shadow-modal);
-    cursor: default;
-    object-fit: contain;
   }
 
   .prompt-history-main {

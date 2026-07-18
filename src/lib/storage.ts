@@ -94,3 +94,17 @@ export function subscribeStorage<T>(
     chrome.storage.onChanged.removeListener(listener);
   };
 }
+
+export function subscribeSessionStorage<T>(
+  key: string,
+  fallbackValue: T,
+  handler: StorageChangeHandler<T>
+) {
+  if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return () => undefined;
+  const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    if (areaName !== "session" || !(key in changes)) return;
+    handler((changes[key]?.newValue as T | undefined) ?? fallbackValue);
+  };
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
+}

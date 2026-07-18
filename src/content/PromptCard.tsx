@@ -26,7 +26,7 @@ export function PromptCard({
   onDelete
 }: PromptCardProps) {
   const title = record.title || record.content.slice(0, 32);
-  const linkedImageCount = record.linkedImages?.filter((item) => typeof item !== "string" && Boolean(item.imageUrl)).length ?? 0;
+  const linkedImageCount = record.exampleImageIds?.length ?? 0;
 
   return (
     <article className="prompt-asset-card">
@@ -37,7 +37,7 @@ export function PromptCard({
 
       <div className={`prompt-card-case-count ${linkedImageCount > 0 ? "has-cases" : ""}`}>
         <Images className="h-3.5 w-3.5" />
-        {linkedImageCount > 0 ? `${linkedImageCount} 张生成案例` : "暂无生成案例"}
+        {linkedImageCount > 0 ? `${linkedImageCount} 张示例图` : "暂无示例图"}
       </div>
 
       <footer className="prompt-card-footer">

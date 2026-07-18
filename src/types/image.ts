@@ -15,6 +15,31 @@ export interface GeneratedImageAsset {
   revisedPrompt?: string;
 }
 
+export type ExampleImageSource = "upload" | "generated";
+
+export interface ExampleImageRecord {
+  id: string;
+  promptId: string;
+  mimeType: string;
+  width: number;
+  height: number;
+  byteSize: number;
+  source: ExampleImageSource;
+  createdAt: number;
+  sortOrder: number;
+  contentHash: string;
+}
+
+export interface ExampleImagePayload extends ExampleImageRecord {
+  dataUrl: string;
+}
+
+export interface ExampleImageUsage {
+  usedBytes: number;
+  limitBytes: number;
+  imageCount: number;
+}
+
 export interface ImageGenerationSuccess {
   ok: true;
   provider: ProviderId;

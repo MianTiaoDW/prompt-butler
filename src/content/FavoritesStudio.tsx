@@ -44,6 +44,7 @@ import { SEED_PROMPTS } from "../lib/seed-prompts";
 import { sendRuntimeMessage } from "../lib/runtime";
 import { exportPromptsAsJson } from "../lib/backup";
 import { showToast } from "../lib/toast";
+import { deletePromptExampleImages } from "../lib/example-images";
 import type {
   PromptOptimizationResult,
   SavedPromptRecord
@@ -422,6 +423,7 @@ export function FavoritesStudio(props: {
   };
 
   const handleDeletePrompt = async (record: SavedPromptRecord) => {
+    await deletePromptExampleImages(record.id);
     await rememberDeletedPrompt(record.id);
     await setFavorites((current) => current.filter((item) => item.id !== record.id));
     setPanelMessage("提示词已删除。");

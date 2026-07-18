@@ -23,8 +23,20 @@ import {
 } from "../lib/storage";
 import { defaultExtensionSettings } from "../lib/provider-presets";
 import type { ConnectionStatus } from "../types/settings";
+import {
+  cleanupOrphanExampleImages,
+  deleteExampleImage,
+  deletePromptExampleImages,
+  fetchImageAsDataUrl,
+  getExampleImage,
+  getExampleImageUsage,
+  putExampleImage
+} from "./example-image-store";
 
 console.log("[Prompt Butler] Service Worker 启动中...");
+
+// Content Script 只读取当前会话任务状态；持久示例图仍只经后台受控消息访问。
+void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" });
 
 const WORKER_SESSION_ID = crypto.randomUUID();
 void recoverInterruptedTasks(WORKER_SESSION_ID);
@@ -229,6 +241,42 @@ chrome.runtime.onMessage.addListener((message: RuntimeRequestMessage, _sender, s
       if (message.type === "open-options-page") {
         await chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
         sendResponse({ ok: true });
+        return;
+      }
+
+      if (message.type === "example-image:prepare") {
+        sendResponse({ ok: true, dataUrl: await fetchImageAsDataUrl(message.payload.url) });
+        return;
+      }
+
+      if (message.type === "example-image:put") {
+        sendResponse({ ok: true, ...(await putExampleImage(message.payload)) });
+        return;
+      }
+
+      if (message.type === "example-image:get") {
+        sendResponse({ ok: true, image: await getExampleImage(message.payload.imageId) });
+        return;
+      }
+
+      if (message.type === "example-image:delete") {
+        await deleteExampleImage(message.payload.imageId);
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (message.type === "example-image:delete-prompt") {
+        sendResponse({ ok: true, deleted: await deletePromptExampleImages(message.payload.promptId) });
+        return;
+      }
+
+      if (message.type === "example-image:usage") {
+        sendResponse({ ok: true, usage: await getExampleImageUsage() });
+        return;
+      }
+
+      if (message.type === "example-image:cleanup") {
+        sendResponse({ ok: true, deleted: await cleanupOrphanExampleImages(message.payload.validPromptIds) });
         return;
       }
 

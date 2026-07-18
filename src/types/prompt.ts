@@ -115,6 +115,8 @@ export interface SavedPromptRecord {
   versions?: PromptVersion[];
   usedCount?: number;
   linkedImages?: Array<PromptLinkedImage | string>;
+  exampleImageIds?: string[];
+  imageStorageVersion?: 2;
   version?: string;
   usageCount?: number;
   lastUsed?: string;

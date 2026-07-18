@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ChevronDown,
-  Copy,
   Download,
   LoaderCircle,
   Save,
@@ -13,24 +12,24 @@ import {
 import { useChromeStorage } from "../hooks/useChromeStorage";
 import { useExtensionSettings } from "../hooks/useExtensionSettings";
 import {
-  addImageHistoryEntries,
   clearImageHistory,
   defaultImageWorkspaceState,
-  getImageHistory,
   IMAGE_STORAGE_KEYS
 } from "../lib/image-library";
 import { getImageConnectionSettings } from "../lib/provider-presets";
 import { toUserFacingError } from "../lib/error-messages";
-import { PROMPT_STORAGE_KEYS, savePromptToFavorites, updateFavoritePrompt } from "../lib/prompt-library";
-import { storageGet } from "../lib/storage";
+import { PROMPT_STORAGE_KEYS, savePromptToFavorites } from "../lib/prompt-library";
+import { bindExampleImage, MAX_EXAMPLE_IMAGES, saveExampleImage } from "../lib/example-images";
+import { storageGet, storageSet } from "../lib/storage";
 import { sendRuntimeMessage, sendRuntimeMessageLong } from "../lib/runtime";
 import { clearImageTask, failImageTask, getImageTask, startImageTask, subscribeImageTask } from "../lib/task-broker";
 import { showToast } from "../lib/toast";
 import type { GeneratedImageAsset, ImageGenerationResult, ImageHistoryEntry, ImageWorkspaceState } from "../types/image";
-import type { PromptLinkedImage, SavedPromptRecord } from "../types/prompt";
+import type { SavedPromptRecord } from "../types/prompt";
 import type { ExtensionSettings } from "../types/settings";
 import { IMAGE_ASPECT_RATIOS, IMAGE_COUNTS, IMAGE_RESOLUTIONS } from "../types/settings";
 import { PromptHistoryPanel } from "./PromptHistoryPanel";
+import { ImagePreviewModal } from "./ImagePreviewModal";
 import { PromptPreviewModal } from "./PromptPreviewModal";
 import { WorkflowConnector } from "./WorkflowConnector";
 import { MOTION } from "../lib/motion";
@@ -39,19 +38,6 @@ const selectClassName = [
   "form-field appearance-none w-full pl-4 pr-10 py-3",
   "cursor-pointer hover:border-accent/30"
 ].join(" ");
-
-async function copyImageToClipboard(imageUrl: string) {
-  try {
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    await navigator.clipboard.write([
-      new ClipboardItem({ [blob.type]: blob })
-    ]);
-    showToast("已复制到剪贴板~");
-  } catch {
-    showToast("复制失败，请重试。");
-  }
-}
 
 function getGalleryAspectClass(aspectRatio: ExtensionSettings["imageAspectRatio"]) {
   if (aspectRatio === "1:1") return "aspect-square";
@@ -82,10 +68,14 @@ export function ImageStudio(props: {
   const [imageHistory, setImageHistory] = useState<ImageHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [previewPromptRecord, setPreviewPromptRecord] = useState<SavedPromptRecord | null>(null);
+  const [savedExampleIds, setSavedExampleIds] = useState<Set<string>>(new Set());
+  const [pendingExampleImage, setPendingExampleImage] = useState<GeneratedImageAsset | null>(null);
   const generationLockRef = useRef(false);
 
   useEffect(() => {
-    void getImageHistory().then(setImageHistory);
+    // 旧版本的历史记录持久化了会失效的图片 URL；新历史仅保留当前会话。
+    void clearImageHistory();
+    void storageSet("prompt-butler-image-task", null);
   }, []);
 
   const { value: workspace, setValue: setWorkspace } = workspaceStorage;
@@ -136,13 +126,20 @@ export function ImageStudio(props: {
       setIsGenerating(false);
     };
 
-    void getImageTask().then(applyTaskState);
+    void getImageTask().then((task) => {
+      if (task.status === "success" || task.status === "error") {
+        void clearImageTask();
+        return;
+      }
+      applyTaskState(task);
+    });
     return subscribeImageTask(applyTaskState);
   }, [settings.imageModel, settings.provider]);
 
   const handleGenerate = async () => {
     if (generationLockRef.current || isGenerating) return;
     generationLockRef.current = true;
+    setPreviewImage(null);
     setIsGenerating(true);
 
     try {
@@ -173,40 +170,9 @@ export function ImageStudio(props: {
 
       if (result.ok) {
         let linkedRecord: SavedPromptRecord | null = null;
-        let resolvedSource = workspace.source;
         if (workspace.source?.promptId) {
           const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
           linkedRecord = records.find((record) => record.id === workspace.source?.promptId) ?? null;
-        } else if (workspace.source?.type === "temporary") {
-          linkedRecord = await savePromptToFavorites({
-            provider: workspace.source.provider ?? result.provider,
-            model: workspace.source.model ?? result.model,
-            format: workspace.source.format,
-            content: workspace.prompt,
-            title: workspace.source.title,
-            category: "收藏/其他",
-            source: "ai-generated",
-            isFavorite: false
-          });
-          resolvedSource = { ...workspace.source, promptId: linkedRecord.id, type: "ai-generated" };
-          await setWorkspace({ ...workspace, source: resolvedSource, lastUpdatedAt: new Date().toISOString() });
-        }
-
-        if (linkedRecord) {
-          const newLinks: PromptLinkedImage[] = result.images.map((image) => ({
-            imageId: image.id,
-            imageUrl: image.url,
-            model: result.model,
-            ratio: settings.imageAspectRatio,
-            resolution: settings.imageResolution,
-            createdAt: result.generatedAt
-          }));
-          const mergedLinks = [...(linkedRecord.linkedImages ?? []), ...newLinks].filter((item, index, all) => {
-            const key = typeof item === "string" ? item : item.imageId ?? item.imageUrl;
-            return all.findIndex((candidate) => (typeof candidate === "string" ? candidate : candidate.imageId ?? candidate.imageUrl) === key) === index;
-          });
-          linkedRecord = await updateFavoritePrompt(linkedRecord.id, { linkedImages: mergedLinks });
-          if (linkedRecord) setPreviewPromptRecord((current) => current?.id === linkedRecord?.id ? linkedRecord : current);
         }
 
         const historyEntries: ImageHistoryEntry[] = result.images.map((image) => ({
@@ -220,12 +186,11 @@ export function ImageStudio(props: {
           count: settings.imageCount,
           generatedAt: result.generatedAt,
           revisedPrompt: image.revisedPrompt,
-          promptId: linkedRecord?.id ?? resolvedSource?.promptId,
-          promptTitle: linkedRecord?.title ?? resolvedSource?.title,
-          promptSource: resolvedSource
+          promptId: linkedRecord?.id ?? workspace.source?.promptId,
+          promptTitle: linkedRecord?.title ?? workspace.source?.title,
+          promptSource: workspace.source
         }));
-        const updatedHistory = await addImageHistoryEntries(historyEntries);
-        setImageHistory(updatedHistory);
+        setImageHistory((current) => [...historyEntries, ...current].slice(0, 50));
       }
     } catch (error) {
       const friendly = toUserFacingError(error);
@@ -273,6 +238,36 @@ export function ImageStudio(props: {
     } finally {
       setDownloadingId(null);
       setIsDownloadingAll(false);
+    }
+  };
+
+  const handleSetExampleImage = async (image: GeneratedImageAsset, replaceIndex?: number) => {
+    const promptId = workspace.source?.promptId;
+    if (!promptId) {
+      showToast("请先保存 Prompt，再将图片设为示例图。");
+      return;
+    }
+    try {
+      const records = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+      const record = records.find((item) => item.id === promptId);
+      if (!record) throw new Error("请先保存 Prompt，再将图片设为示例图。");
+      if ((record.exampleImageIds?.length ?? 0) >= MAX_EXAMPLE_IMAGES && replaceIndex === undefined) {
+        setPendingExampleImage(image);
+        return;
+      }
+      const saved = await saveExampleImage({
+        promptId,
+        source: "generated",
+        image: image.url,
+        sortOrder: replaceIndex ?? (record.exampleImageIds?.length ?? 0),
+        replaceImageId: replaceIndex === undefined ? undefined : record.exampleImageIds?.[replaceIndex]
+      });
+      await bindExampleImage(promptId, saved.image.id, replaceIndex);
+      setSavedExampleIds((current) => new Set(current).add(image.id));
+      setPendingExampleImage(null);
+      showToast(saved.duplicate ? "该图片已经是示例图" : "示例图已添加");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "示例图保存失败，请重试。");
     }
   };
 
@@ -462,33 +457,34 @@ export function ImageStudio(props: {
         ) : null}
       </section>
 
-      <section className="image-results-panel">
+      <section className="image-results-panel" aria-busy={isGenerating}>
         <div className="image-results-heading">
           <div>
-            <div className="section-label">生成结果</div>
-            <div className="section-hint">点击图片预览，支持单张或批量下载</div>
+            <div className="section-label">本次生成结果</div>
+            <div className="section-hint">临时结果 · 关闭后不保留</div>
           </div>
-          {generationResult?.ok ? <div className="image-asset-actions"><button type="button" disabled={isDownloadingAll} onClick={() => void handleDownload(generationResult.images.map((image) => image.url))}><Download className="h-4 w-4" />{isDownloadingAll ? "保存中" : "保存作品"}</button><button type="button" onClick={() => void saveCurrentPrompt()}><Save className="h-4 w-4" />保存 Prompt</button></div> : null}
+          {!isGenerating && generationResult?.ok ? <div className="image-asset-actions"><button type="button" disabled={isDownloadingAll} onClick={() => void handleDownload(generationResult.images.map((image) => image.url))}><Download className="h-4 w-4" />{isDownloadingAll ? "保存中" : "保存作品"}</button><button type="button" onClick={() => void saveCurrentPrompt()}><Save className="h-4 w-4" />保存 Prompt</button></div> : null}
         </div>
 
         {isGenerating ? (
           <div className="image-generation-status" role="status" aria-live="polite">
-            {generationResult ? "正在生成，将在当前结果区域更新" : "正在生成图片"}
+            正在生成新图片，完成后将在这里显示
           </div>
         ) : null}
 
-        {isGenerating && !generationResult ? (
-          <div className="image-results-grid">
+        {isGenerating ? (
+          <div className="image-results-grid" aria-hidden="true">
             {Array.from({ length: settings.imageCount }).map((_, index) => (
-              <div
-                key={`skeleton-${index + 1}`}
-                className={`${getGalleryAspectClass(settings.imageAspectRatio)} animate-pulse rounded-[var(--radius-large)] border border-white/10 bg-white/[0.07]`}
-              />
+              <article key={`skeleton-${index + 1}`} className="media-card">
+                <div
+                  className={`${getGalleryAspectClass(settings.imageAspectRatio)} w-full animate-pulse bg-white/[0.075]`}
+                />
+              </article>
             ))}
           </div>
         ) : null}
 
-        {generationResult && !generationResult.ok ? (
+        {!isGenerating && generationResult && !generationResult.ok ? (
           <div className="mt-4 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-4 text-sm text-rose-200">
             <p>{generationResult.message}</p>
             <button type="button" className="ghost-button mt-3 px-3 py-2 text-xs" onClick={() => { void handleGenerate(); }}>
@@ -511,7 +507,7 @@ export function ImageStudio(props: {
           </div>
         ) : null}
 
-        {generationResult?.ok ? (
+        {!isGenerating && generationResult?.ok ? (
           <div className="image-results-grid">
             {generationResult.images.map((image) => (
               <article
@@ -521,7 +517,7 @@ export function ImageStudio(props: {
                 <div className="group relative cursor-pointer">
                   <img
                     src={image.url}
-                    alt="Generated prompt art"
+                    alt=""
                     loading="lazy"
                     decoding="async"
                     className={`${getGalleryAspectClass(settings.imageAspectRatio)} generated-image-reveal w-full object-cover transition duration-300 group-hover:scale-[1.015]`}
@@ -550,7 +546,17 @@ export function ImageStudio(props: {
                     <Download className="h-3.5 w-3.5" />
                     {downloadingId === image.id ? "下载中" : "下载"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={(event) => { event.stopPropagation(); void handleSetExampleImage(image); }}
+                    disabled={savedExampleIds.has(image.id)}
+                    className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-xl border border-white/10 bg-black/55 px-3 py-2 text-xs text-white/85 backdrop-blur transition hover:border-accent/35 disabled:opacity-60"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {savedExampleIds.has(image.id) ? "已设为示例图" : "设为示例图"}
+                  </button>
                 </div>
+                <div className="border-t border-white/10 px-3 py-2 text-[11px] text-white/45">临时结果 · 关闭后不保留</div>
                 {image.revisedPrompt ? (
                   <div className="border-t border-white/10 px-3 py-3 text-xs leading-5 text-white/45">
                     {image.revisedPrompt}
@@ -566,13 +572,27 @@ export function ImageStudio(props: {
             生成完成后在此展示图片网格
           </div>
         ) : null}
+
+        {pendingExampleImage ? (
+          <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/5 p-4 text-sm text-white/75">
+            <p>已保存 3 张示例图，请选择要替换的位置：</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {Array.from({ length: MAX_EXAMPLE_IMAGES }).map((_, index) => (
+                <button key={index} type="button" className="ghost-button px-3 py-2 text-xs" onClick={() => void handleSetExampleImage(pendingExampleImage, index)}>
+                  替换第 {index + 1} 张
+                </button>
+              ))}
+              <button type="button" className="ghost-button px-3 py-2 text-xs" onClick={() => setPendingExampleImage(null)}>取消</button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <PromptHistoryPanel
         entries={imageHistory}
         open={showHistory}
         onToggle={() => setShowHistory((current) => !current)}
-        onClear={() => { void clearImageHistory().then(() => setImageHistory([])); }}
+        onClear={() => setImageHistory([])}
         onRestore={(entry) => { void restoreHistoryEntry(entry); }}
         onDownload={(entry) => { void handleDownload([entry.url], entry.id); }}
         onViewPrompt={(entry) => { void openPromptAsset(entry.promptId); }}
@@ -591,58 +611,10 @@ export function ImageStudio(props: {
         onToggleFavorite={() => { void saveCurrentPrompt(); }}
       />
 
-      {previewImage ? (
-        <div
-          className="fixed inset-0 z-[2147483648] flex items-center justify-center bg-black/85 backdrop-blur-md"
-          onClick={() => {
-            setPreviewImage(null);
-          }}
-        >
-          <div
-            className="relative max-h-[90vh] max-w-[90vw]"
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-          >
-            <img
-              src={previewImage.url}
-              alt="Preview"
-              className="max-h-[85vh] max-w-[85vw] rounded-[1.35rem] object-contain shadow-[0_28px_80px_rgba(0,0,0,0.55)]"
-            />
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  void copyImageToClipboard(previewImage.url);
-                }}
-                className="ghost-button border-white/20 bg-black/60 px-5 py-3 text-sm text-white/85 backdrop-blur hover:bg-black/80"
-              >
-                <Copy className="h-4 w-4" />
-                复制
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleDownload([previewImage.url], previewImage.id);
-                }}
-                className="gradient-button px-5 py-3 text-sm"
-              >
-                <Download className="h-4 w-4" />
-                下载
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setPreviewImage(null);
-              }}
-              className="absolute right-4 top-4 rounded-full border border-white/20 bg-black/60 p-2 text-white/70 backdrop-blur transition hover:border-accent/35 hover:text-white"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <ImagePreviewModal
+        image={previewImage ? { id: previewImage.id, url: previewImage.url, alt: "生成结果大图预览" } : null}
+        onClose={() => setPreviewImage(null)}
+      />
     </div>
   );
 }
