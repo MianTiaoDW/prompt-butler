@@ -39,7 +39,11 @@ node node_modules/vite/bin/vite.js design-lab/optical-fidelity-lab --host 127.0.
 
 最新候选汇总图位于 `artifacts/hero-icon-material-bright-v7.png`，小尺寸检查图位于 `artifacts/hero-icon-material-bright-v7-small.png`。该版本尚未被用户确认为最终稿，不能直接视为正式插件资产。
 
-`assets/` 同时保留早期 AI Processing、Warning、Success、Upload 的 WebP / AVIF 和中间生产资产，用于追溯设计迭代。图标本体不持续动画，CSS 只负责容器环境光和状态反馈。
+最新结构探索位于 `artifacts/hero-icon-shape-study-v8.svg` 和 `artifacts/hero-icon-shape-study-v8.png`。该稿使用手工 SVG 锁定符号轮廓，包含 64px / 48px 检查样本，只用于确认语义、比例和系列感，不代表最终材质。
+
+早期整套组件成果总览归档为 `artifacts/optical-fidelity-lab-overview-legacy.png`，只用于追溯，不代表当前图标方向。
+
+`assets/` 同时保留早期 AI Processing、Warning、Success、Upload 的 WebP / AVIF、透明抠图与原始生产 Sprite，用于追溯设计迭代。绿色底图是生产过程中的抠图源，不是交付成品。图标本体不持续动画，CSS 只负责容器环境光和状态反馈。
 
 ## 文档
 

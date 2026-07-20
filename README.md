@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="icons/icon128.png" width="96" alt="Prompt Butler" />
+  <img src="icons/icon128.png" width="96" alt="提示词生成管家" />
 </p>
 
-<h1 align="center">提示词生成管家 · Prompt Butler</h1>
+<h1 align="center">提示词生成管家</h1>
 
 <p align="center">
   一款用于生成、管理与复用高质量 AI 绘画提示词的高级浏览器插件。
@@ -16,10 +16,14 @@
   <img src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white&style=flat-square" alt="Vite" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-3-06B6D4?logo=tailwindcss&logoColor=white&style=flat-square" alt="Tailwind CSS" />
   <img src="https://img.shields.io/badge/Chrome_Extension-MV3-4285F4?logo=googlechrome&logoColor=white&style=flat-square" alt="Chrome Extension" />
-  <img src="https://img.shields.io/badge/Framer_Motion-11-0055FF?logo=framer&logoColor=white&style=flat-square" alt="Framer Motion" />
+  <img src="https://img.shields.io/badge/Framer_Motion-12-0055FF?logo=framer&logoColor=white&style=flat-square" alt="Framer Motion" />
   <img src="https://img.shields.io/badge/Lucide_Icons-latest-F56565?logo=lucide&logoColor=white&style=flat-square" alt="Lucide" />
   <img src="https://img.shields.io/badge/CRXJS-latest-FF6B35?logo=vite&logoColor=white&style=flat-square" alt="CRXJS" />
 </p>
+
+---
+
+> **当前开发基准（2026-07-21）**：`origin/main` 仍是旧版。需要继续最新本地功能、视觉与隔离实验时，请检出 `codex/optical-fidelity-lab`，并先阅读 [`docs/CODEX_HANDOFF.md`](docs/CODEX_HANDOFF.md)。该分支尚未合并，不应被旧版 `main` 覆盖。
 
 ---
 
@@ -71,8 +75,9 @@
 
 1. 克隆仓库：
    ```bash
-   git clone https://github.com/你的用户名/项目名.git
-   cd 项目名
+   git clone https://github.com/MianTiaoDW/prompt-butler.git
+   cd prompt-butler
+   git switch --track origin/codex/optical-fidelity-lab
    ```
 
 2. 安装依赖并构建：
@@ -126,13 +131,18 @@
 │   ├── hooks/            # 自定义 React Hooks
 │   ├── lib/              # 工具函数（存储、提示词库、备份等）
 │   └── types/            # TypeScript 类型定义
+├── native/               # Windows 可选置顶辅助程序
+├── design-lab/           # 与正式插件隔离的视觉实验和截图
+├── ui-pattern-atlas/     # 隔离的站内 UI 知识图谱
 ├── icons/                # 扩展图标
-├── dist/                 # 构建输出
+├── docs/                 # 使用说明与跨设备交接
 ├── manifest.config.ts    # Manifest V3 配置
 ├── vite.config.ts        # Vite 构建配置
 ├── tailwind.config.ts    # Tailwind 配置
-└── docs/                 # 文档
+└── vite.config.ts        # Vite / CRXJS 构建配置
 ```
+
+完整职责说明见 [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md)。Design Lab 不会进入正式插件构建，除非未来明确迁移。
 
 ---
 

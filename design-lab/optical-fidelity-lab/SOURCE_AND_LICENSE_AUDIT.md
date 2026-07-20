@@ -17,3 +17,11 @@
 - `react` / `react-dom` 在 Lab 内固定为 18.3.1，避免 IconSax peer 自动安装 React 19 后与仓库 React 18 renderer 产生元素协议冲突。
 - 未向正式插件的根 `package.json` 添加任何依赖。
 - Componentry、Animated Buttons、Kinetics、CSS Cursors 的代码没有直接复制进入 Lab；上述记录说明研究依据和拒绝项。
+
+## 图标资产来源透明度
+
+- Functional Icon System 的小尺寸操作图标来自 `iconsax-reactjs@0.0.8`，只在隔离 Lab 中使用；正式插件仍使用 `lucide-react`。
+- `assets/optical-status-sprite-source.png` 及对应透明抠图、早期 Hero 候选位图来自 AI 图像生成与后续边缘处理。纯绿背景只服务于抠图流程，不是正式资产。
+- `assets/hero-v2/` 中的 PNG/WebP/AVIF 是上述候选的裁切、透明化和多倍率导出；它们适合作为研究素材，不代表已经批准接入正式插件。
+- `artifacts/hero-icon-shape-study-v8.svg` 是手工可编辑 SVG 结构草案，不是 AI 位图。它用于锁定轮廓和小尺寸可读性，仍需人工微调光学材质、光照一致性和语义辨识。
+- 当前没有任何 Hero Icon 被标记为正式插件最终资产；只有用户明确确认汇总稿后，才进入拆分、边缘清理与接入评估。

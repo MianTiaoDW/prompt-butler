@@ -1,5 +1,25 @@
 # 更新日志
 
+## [Unreleased] - 2026-07-21
+
+### 正式插件
+
+- 重构网页内工作台、提示词预览/保存/优化、创作历史和图像工坊交互。
+- 用户明确保存的示例图改由 Background 管理的 IndexedDB Blob 持久化；生成结果仍保持临时。
+- 增加 Windows 可选原生置顶辅助程序及安装/卸载脚本。
+- 增加站内 `ui-pattern-atlas` 知识图谱，不把外部资源退化为链接目录。
+
+### 隔离视觉研究
+
+- 增加 Apple Optical Prompt Library 的 420/680/980 原型、状态截图和实现规范。
+- 增加 Optical Fidelity Lab、Hero Icon 多轮候选、可编辑 SVG、原始生产素材及来源核查。
+- 上述 Lab 尚未迁移到正式插件，候选 Hero 图标也尚未获得最终确认。
+
+### 交接与验证
+
+- 增加跨设备接续文档，明确 `codex/optical-fidelity-lab` 是合并前的最新开发基准。
+- 静态检查与构建结果应记录在交接文档；浏览器真实流程仍需在目标电脑单独验收。
+
 本文件记录每次版本更新的主要变更。
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。

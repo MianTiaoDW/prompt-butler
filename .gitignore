@@ -1,7 +1,9 @@
 node_modules/
 dist/
 .claude/
+.firecrawl/
 .DS_Store
+*.log
 *.local
 .env
 .env.*
