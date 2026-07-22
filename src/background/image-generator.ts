@@ -22,6 +22,16 @@ function buildUrl(baseUrl: string, path: string) {
   return `${normalizedBaseUrl}${normalizedPath}`;
 }
 
+function usesXingheGptImage2Payload(endpoint: string, model: string) {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    const isXinghe = hostname === "xinghe.xin" || hostname.endsWith(".xinghe.xin");
+    return isXinghe && /^gpt-image-2(?:-all)?$/i.test(model.trim());
+  } catch {
+    return false;
+  }
+}
+
 // 智创聚合API（GPT-Image）仅支持以下尺寸
 // gpt-image-2: 1024x1024, 1536x1024, 1024x1536
 // gpt-image-2-pro: 额外支持 2048x2048, 2048x1152, 3840x2160, 2160x3840
@@ -95,7 +105,8 @@ function normalizeImageAssets(
     url?: string;
     b64_json?: string;
     revised_prompt?: string;
-  }>
+  }>,
+  mimeType = "image/png"
 ) {
   const assets: GeneratedImageAsset[] = [];
 
@@ -104,7 +115,7 @@ function normalizeImageAssets(
       assets.push({
         id: `image-${Date.now()}-${index}`,
         url: item.url,
-        mimeType: "image/png",
+        mimeType,
         revisedPrompt: item.revised_prompt
       });
       return;
@@ -113,8 +124,8 @@ function normalizeImageAssets(
     if (item.b64_json) {
       assets.push({
         id: `image-${Date.now()}-${index}`,
-        url: `data:image/png;base64,${item.b64_json}`,
-        mimeType: "image/png",
+        url: `data:${mimeType};base64,${item.b64_json}`,
+        mimeType,
         revisedPrompt: item.revised_prompt
       });
     }
@@ -178,6 +189,7 @@ async function requestSingleImage(
   endpoint: string
 ): Promise<GeneratedImageAsset[]> {
   const imageConnection = getImageConnectionSettings(settings);
+  const useXinghePayload = usesXingheGptImage2Payload(endpoint, settings.imageModel);
   // 每次请求创建新的 AbortController（如果还没有外部取消的）
   if (!currentGenerationAbort || currentGenerationAbort.signal.aborted) {
     currentGenerationAbort = new AbortController();
@@ -195,17 +207,19 @@ async function requestSingleImage(
         prompt: input.prompt,
         n: 1,
         size: mapSize(input.aspectRatio, input.resolution),
-        response_format: "url"
+        ...(useXinghePayload
+          ? { quality: "low", format: "jpeg" }
+          : { response_format: "url" })
       }),
       cancelSignal: currentGenerationAbort.signal
     });
 
     if (!response.ok) {
       const errorMessage = await parseErrorMessage(response);
-      if (settings.imageApiKey?.trim() && [401, 402, 403, 429].includes(response.status)) {
-        throw new Error("当前生图专用 Key 不可用，请检查额度或渠道。");
-      }
-      throw new ImageEndpointError(errorMessage, response.status === 404 || response.status === 405);
+      throw new ImageEndpointError(
+        `HTTP ${response.status}：${errorMessage}`,
+        response.status === 404 || response.status === 405
+      );
     }
 
     const contentType = response.headers.get("content-type") ?? "";
@@ -221,7 +235,7 @@ async function requestSingleImage(
       }>;
     };
 
-    const images = normalizeImageAssets(data.data ?? []);
+    const images = normalizeImageAssets(data.data ?? [], useXinghePayload ? "image/jpeg" : "image/png");
     if (images.length === 0) {
       throw new Error("接口返回成功但未包含图片数据。");
     }

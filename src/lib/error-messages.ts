@@ -7,6 +7,17 @@ export function toUserFacingError(error: unknown): UserFacingError {
   const technicalDetails = error instanceof Error ? error.message : String(error || "未知错误");
   const normalized = technicalDetails.toLowerCase();
 
+  if (
+    normalized.includes("负载已饱和") ||
+    normalized.includes("上游负载") ||
+    normalized.includes("overloaded") ||
+    normalized.includes("overload")
+  ) {
+    return {
+      message: "当前生图通道繁忙，请稍后重试或更换令牌分组。",
+      technicalDetails
+    };
+  }
   if (normalized.includes("quota") || normalized.includes("insufficient") || normalized.includes("429")) {
     return {
       message: "图片生成额度不足，请检查生图 API Key、账户余额或模型权限。",

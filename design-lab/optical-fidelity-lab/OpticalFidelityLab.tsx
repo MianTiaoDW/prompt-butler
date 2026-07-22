@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { ComponentType } from "react";
 import type { IconProps } from "iconsax-reactjs";
 import {
@@ -26,6 +26,7 @@ type UploadState = "idle" | "uploading" | "generating" | "success" | "error";
 type CardState = "default" | "hover" | "selected" | "pressed";
 type AiState = "closed" | "ready" | "processing" | "complete" | "error";
 type OpticalIcon = ComponentType<IconProps>;
+type HeroIconKind = "ai" | "upload" | "processing" | "success" | "warning" | "command";
 
 const uploadLabels: Record<UploadState, string> = {
   idle: "等待上传",
@@ -62,6 +63,117 @@ const stateAssetMap = {
   success: "success",
   upload: "upload",
 } as const;
+
+const heroIconKinds: Array<{ kind: HeroIconKind; label: string; meta: string }> = [
+  { kind: "ai", label: "AI Spark", meta: "AI 生成 / 优化" },
+  { kind: "upload", label: "Upload", meta: "参考图 / 资产上传" },
+  { kind: "processing", label: "Processing", meta: "生成中 / 优化中" },
+  { kind: "success", label: "Success", meta: "完成 / 已应用" },
+  { kind: "warning", label: "Warning", meta: "失败 / 需要处理" },
+  { kind: "command", label: "Command Entry", meta: "输入 / 提交指令" },
+];
+
+const gradientRibbonAssets: Record<HeroIconKind, string> = {
+  ai: new URL("./artifacts/ai-spark-gradient-ribbon-v11.png", import.meta.url).href,
+  upload: new URL("./artifacts/upload-gradient-ribbon-v11.png", import.meta.url).href,
+  processing: new URL("./artifacts/processing-gradient-ribbon-v11.png", import.meta.url).href,
+  success: new URL("./artifacts/success-gradient-ribbon-v11.png", import.meta.url).href,
+  warning: new URL("./artifacts/warning-gradient-ribbon-v11.png", import.meta.url).href,
+  command: new URL("./artifacts/command-entry-gradient-ribbon-v11.png", import.meta.url).href,
+};
+
+function AppleOpticalHeroIcon({ kind, size = 128 }: { kind: HeroIconKind; size?: number }) {
+  const id = useId().replace(/:/g, "");
+  const rim = `${id}-rim`;
+  const cool = `${id}-cool`;
+  const status = kind === "success" ? "#54d693" : kind === "warning" ? "#ff7f91" : "#f7faff";
+
+  const glyph = (() => {
+    if (kind === "ai") return <>
+      <path className="hero-glyph-depth" d="M45 91 C48 60 75 42 104 51 C82 56 67 70 62 90 C58 105 62 119 73 131" />
+      <path className="hero-glyph-rim" d="M45 91 C48 60 75 42 104 51 C82 56 67 70 62 90 C58 105 62 119 73 131" />
+      <path className="hero-glyph-depth" d="M115 69 C112 100 85 118 56 109 C78 104 93 90 98 70 C102 55 98 41 87 29" />
+      <path className="hero-glyph-rim" d="M115 69 C112 100 85 118 56 109 C78 104 93 90 98 70 C102 55 98 41 87 29" />
+      <path d="M80 65 C83 73 87 77 95 80 C87 83 83 87 80 95 C77 87 73 83 65 80 C73 77 77 73 80 65 Z" fill="#f7faff" />
+      <circle cx="123" cy="37" r="5.5" fill={`url(#${cool})`} />
+    </>;
+    if (kind === "upload") return <>
+      <path className="hero-glyph-depth" d="M80 105 V45 M58 67 L80 45 L102 67" />
+      <path className="hero-glyph-rim" d="M80 105 V45 M58 67 L80 45 L102 67" />
+      <path className="hero-tray-depth" d="M38 104 C49 121 63 128 80 128 C97 128 111 121 122 104" />
+      <path className="hero-tray-rim" d="M38 104 C49 121 63 128 80 128 C97 128 111 121 122 104" />
+    </>;
+    if (kind === "processing") return <>
+      <path className="hero-glyph-depth" d="M48 118 A53 53 0 1 1 121 101" />
+      <path className="hero-glyph-rim" d="M48 118 A53 53 0 1 1 121 101" />
+      <circle cx="121" cy="101" r="8" fill={`url(#${cool})`} />
+      <circle cx="121" cy="101" r="3" fill="#f7faff" />
+    </>;
+    if (kind === "success") return <>
+      <path className="hero-ring-depth" d="M118 53 A50 50 0 1 0 128 91" />
+      <path className="hero-ring-rim" d="M118 53 A50 50 0 1 0 128 91" />
+      <path className="hero-glyph-depth" d="M50 82 L71 103 L112 59" />
+      <path className="hero-glyph-rim" d="M50 82 L71 103 L112 59" />
+      <circle cx="128" cy="91" r="4" fill={status} />
+    </>;
+    if (kind === "warning") return <>
+      <path className="hero-warning-depth" d="M80 35 L129 120 Q134 129 123 129 H37 Q26 129 31 120 Z" />
+      <path className="hero-warning-rim" d="M80 35 L129 120 Q134 129 123 129 H37 Q26 129 31 120 Z" />
+      <path d="M80 61 V96" stroke="#f7faff" strokeWidth="10" strokeLinecap="round" />
+      <circle cx="80" cy="114" r="5" fill={status} />
+    </>;
+    return <>
+      <rect className="hero-command-depth" x="36" y="45" width="88" height="70" rx="24" />
+      <rect className="hero-command-rim" x="36" y="45" width="88" height="70" rx="24" />
+      <path className="hero-command-arrow-depth" d="M49 80 H90 M77 66 L91 80 L77 94" />
+      <path className="hero-command-arrow-rim" d="M49 80 H90 M77 66 L91 80 L77 94" />
+    </>;
+  })();
+
+  return <svg className="apple-optical-hero-icon" width={size} height={size} viewBox="0 0 160 160" role="img" aria-label={kind}>
+    <defs>
+      <linearGradient id={rim} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="#f7faff" />
+        <stop offset=".24" stopColor="#b9c8e8" />
+        <stop offset=".68" stopColor="#547dbf" />
+        <stop offset="1" stopColor="#1e4e9b" />
+      </linearGradient>
+      <radialGradient id={cool} cx="35%" cy="25%" r="78%">
+        <stop offset="0" stopColor="#f7faff" />
+        <stop offset=".42" stopColor="#7fb4ff" />
+        <stop offset="1" stopColor="#1554b6" />
+      </radialGradient>
+    </defs>
+    <g style={{ "--hero-rim": `url(#${rim})` } as React.CSSProperties}>{glyph}</g>
+  </svg>;
+}
+
+function AppleOpticalHeroSystem() {
+  return <div className="apple-hero-system">
+    <header><div><span>Apple Optical · V10</span><h3>单件雕塑，轮廓先于材质</h3></div><p>Pin 灵感审计后收敛：黑芯、银蓝薄边、单侧高光、极少状态色。</p></header>
+    <div className="apple-hero-grid">
+      {heroIconKinds.map(({ kind, label, meta }) => <article key={kind}>
+        <div className="hero-icon-stage"><AppleOpticalHeroIcon kind={kind} /><div className="hero-size-check"><AppleOpticalHeroIcon kind={kind} size={48} /><span>48</span></div></div>
+        <h4>{label}</h4><p>{meta}</p>
+      </article>)}
+    </div>
+  </div>;
+}
+
+function GradientRibbonHeroSystem() {
+  return <div className="gradient-ribbon-system">
+    <header><div><span>Gradient Ribbon · V11</span><h3>功能语义藏进同一条光学缎带</h3></div><p>粗轮廓负责识别，黑色负空间负责巧思；每枚同时接受 48px 浏览器尺度检查。</p></header>
+    <div className="gradient-ribbon-grid">
+      {heroIconKinds.map(({ kind, label, meta }) => <article key={kind}>
+        <div className="ribbon-icon-stage">
+          <img className="ribbon-icon-large" src={gradientRibbonAssets[kind]} alt={`${label} 渐变缎带图标`} />
+          <div className="ribbon-size-check"><span><img src={gradientRibbonAssets[kind]} alt="" /></span><small>48 px</small></div>
+        </div>
+        <h4>{label}</h4><p>{meta}</p>
+      </article>)}
+    </div>
+  </div>;
+}
 
 function StatusAsset({ kind, size = 112 }: { kind: keyof typeof stateAssetMap; size?: number }) {
   const file = stateAssetMap[kind];
@@ -269,6 +381,8 @@ export function OpticalFidelityLab() {
   if (shot === "upload") return <main className="shot-page"><UploadComparison /></main>;
   if (shot === "command") return <main className="shot-page"><CommandComparison /></main>;
   if (shot === "icons") return <main className="shot-page shot-icons"><IconStateSystem /></main>;
+  if (shot === "hero-icons-v10") return <main className="shot-page shot-hero-icons"><AppleOpticalHeroSystem /></main>;
+  if (shot === "hero-icons-v11") return <main className="shot-page shot-ribbon-icons"><GradientRibbonHeroSystem /></main>;
   if (shot === "states") return <main className="shot-page shot-states"><ComponentStateBoard /></main>;
   if (shot === "card") return <main className="shot-page shot-single"><PromptAssetCard forcedState="selected" favorite /></main>;
   if (shot === "card-hover") return <main className="shot-page shot-single"><PromptAssetCard /></main>;
@@ -280,6 +394,8 @@ export function OpticalFidelityLab() {
       <LabSection number="01" title="Violet Upload Panel" note="外壳、体积光、内凹进度腔与白色发光核心。" className="upload-section"><UploadComparison /></LabSection>
       <LabSection number="02" title="Optical Command Bar" note="黑紫内凹命令面与定向冰白折射。"><CommandComparison /></LabSection>
       <LabSection number="03" title="Optical Icon System" note="IconSax Linear / Bulk / TwoTone 的同源状态变化。"><IconStateSystem /></LabSection>
+      <LabSection number="03A" title="Apple Optical Hero System" note="生成型大图标：黑芯、银蓝薄边、单侧高光与 48px 轮廓验证。"><AppleOpticalHeroSystem /></LabSection>
+      <LabSection number="03B" title="Gradient Ribbon Hero System" note="V11：用连续缎带、负空间与折叠关系把功能语义做进轮廓。"><GradientRibbonHeroSystem /></LabSection>
       <LabSection number="04" title="Prompt Asset Card V2" note="信息效率优先；Hover 浮起，Selected 稳定归属。"><div className="card-state-grid">{(["default", "hover", "selected", "pressed"] as CardState[]).map((state) => <div key={state}><span>{state}</span><PromptAssetCard forcedState={state} favorite={state === "selected"} /></div>)}</div></LabSection>
       <LabSection number="05" title="AI Processing Panel" note="仅 Processing 启动白紫发光核心；完成后收敛。"><AiProcessingPanel /></LabSection>
       <LabSection number="A11Y" title="Reduced modes" note="状态语义保留；移除扫光、漂移与实时模糊。"><AccessibilityBoard /></LabSection>
