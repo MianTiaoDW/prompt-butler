@@ -6,7 +6,10 @@ import {
   Book,
   CloseCircle,
   Copy,
+  DocumentDownload,
   Edit2,
+  Eye,
+  EyeSlash,
   Filter,
   Folder2,
   Gallery,
@@ -15,6 +18,7 @@ import {
   SearchNormal,
   Setting2,
   Sort,
+  TickCircle,
   Trash,
 } from "iconsax-reactjs";
 
@@ -486,6 +490,114 @@ function LabOverview() {
   </main>;
 }
 
+type FunctionalIconCardProps = {
+  name: string;
+  description: string;
+  trigger: string;
+  className: string;
+  stateLabel: string;
+  pressed?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+};
+
+function FunctionalIconCard({ name, description, trigger, className, stateLabel, pressed, onClick, children }: FunctionalIconCardProps) {
+  return <article className="functional-icon-card">
+    <header>
+      <span className="functional-icon-trigger">{trigger}</span>
+      <span className="functional-icon-state">{stateLabel}</span>
+    </header>
+    <button
+      type="button"
+      className={`functional-icon-control ${className}`}
+      aria-label={`${name}：${description}`}
+      aria-pressed={pressed}
+      onClick={onClick}
+    >
+      <span className="functional-icon-well" aria-hidden="true">{children}</span>
+    </button>
+    <div className="functional-icon-copy"><h2>{name}</h2><p>{description}</p></div>
+  </article>;
+}
+
+function FunctionalMotionIconLab() {
+  const [copied, setCopied] = useState(false);
+  const [favorite, setFavorite] = useState(false);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [visible, setVisible] = useState(true);
+  const [downloaded, setDownloaded] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(false), 1000);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
+
+  useEffect(() => {
+    if (!downloaded) return;
+    const timeout = window.setTimeout(() => setDownloaded(false), 1000);
+    return () => window.clearTimeout(timeout);
+  }, [downloaded]);
+
+  return <section className="functional-motion-lab">
+    <header className="functional-motion-header">
+      <div><span>Functional Motion Icons · V1</span><h1>功能图标的动作，<br />也应该表达含义。</h1></div>
+      <p>基于现有 IconSax 轮廓建立克制的语义动效。它们服务于高频工具操作，不取代六枚冻结的 Gradient Ribbon Glyph。</p>
+    </header>
+
+    <div className="functional-motion-rules" aria-label="动效规则">
+      <span>Pointer 驱动</span><span>无自动循环</span><span>100–220ms</span><span>可随时反向</span><span>Reduced Motion 安全</span>
+    </div>
+
+    <div className="functional-motion-grid">
+      <FunctionalIconCard name="搜索" description="指针经过时镜片轻探，键盘聚焦只保留焦点环。" trigger="Hover" stateLabel="查找内容" className="motion-search">
+        <SearchNormal size={48} variant="Linear" />
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="设置" description="齿轮仅转过一个刻度，避免持续旋转造成噪声。" trigger="Hover" stateLabel="偏好设置" className="motion-settings">
+        <Setting2 size={48} variant="Linear" />
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="复制" description="点击后短暂切换为完成状态，再自动回到复制。" trigger="Click" stateLabel={copied ? "已复制" : "复制内容"} className={`motion-copy ${copied ? "is-complete" : ""}`} onClick={() => setCopied(true)}>
+        <span className="functional-icon-layer is-primary"><Copy size={48} variant="Linear" /></span>
+        <span className="functional-icon-layer is-confirm"><TickCircle size={48} variant="Bold" /></span>
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="收藏" description="Rose 只表达收藏语义，填充变化比夸张弹跳更清楚。" trigger="Toggle" stateLabel={favorite ? "已收藏" : "未收藏"} className={`motion-favorite ${favorite ? "is-active" : ""}`} pressed={favorite} onClick={() => setFavorite((value) => !value)}>
+        <Heart size={48} variant={favorite ? "Bold" : "Linear"} />
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="删除" description="第一次点击进入待确认状态，演示环境不会真正删除。" trigger="Confirm" stateLabel={deleteArmed ? "等待确认" : "删除项目"} className={`motion-delete ${deleteArmed ? "is-armed" : ""}`} pressed={deleteArmed} onClick={() => setDeleteArmed((value) => !value)}>
+        <Trash size={48} variant="Linear" />
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="展开 / 收起" description="箭头方向持久对应内容状态，快速反向无需等待。" trigger="Toggle" stateLabel={expanded ? "已展开" : "已收起"} className={`motion-expand ${expanded ? "is-active" : ""}`} pressed={expanded} onClick={() => setExpanded((value) => !value)}>
+        <ArrowDown2 size={48} variant="Linear" />
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="显示 / 隐藏" description="两种清晰符号交叉淡入，不依赖复杂形变表达状态。" trigger="Toggle" stateLabel={visible ? "当前显示" : "当前隐藏"} className={`motion-visibility ${visible ? "is-visible" : ""}`} pressed={visible} onClick={() => setVisible((value) => !value)}>
+        <span className="functional-icon-layer is-eye"><Eye size={48} variant="Linear" /></span>
+        <span className="functional-icon-layer is-eye-slash"><EyeSlash size={48} variant="Linear" /></span>
+      </FunctionalIconCard>
+
+      <FunctionalIconCard name="下载" description="内容沿下载方向轻落，完成反馈只出现一次。" trigger="Click" stateLabel={downloaded ? "已下载" : "下载资产"} className={`motion-download ${downloaded ? "is-complete" : ""}`} onClick={() => setDownloaded(true)}>
+        <DocumentDownload size={48} variant="Linear" />
+      </FunctionalIconCard>
+    </div>
+
+    <footer className="functional-toolbar-preview">
+      <div><span>Prompt Card · Real Context</span><strong>雨夜电影感侧脸</strong></div>
+      <div className="functional-toolbar-actions" aria-label="提示词卡片功能操作">
+        <button aria-label="搜索"><SearchNormal size={18} /></button>
+        <button aria-label="复制"><Copy size={18} /></button>
+        <button className="is-favorite" aria-label="收藏"><Heart size={18} variant="Bold" /></button>
+        <button aria-label="更多设置"><Setting2 size={18} /></button>
+      </div>
+    </footer>
+  </section>;
+}
+
 function Shot({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <main className={`shot-shell ${className}`}>{children}</main>;
 }
@@ -510,6 +622,8 @@ export function VisualIntegrationLab() {
     if (shot === "button-states") return <Shot><StateShowcase kind="buttons" /></Shot>;
     if (shot === "reduced-motion") return <Shot className="force-reduced-motion"><Workbench width={680} mode="split" inspectorState="processing" /></Shot>;
     if (shot === "reduced-transparency") return <Shot className="force-reduced-transparency"><Workbench width={680} mode="split" inspectorState="processing" /></Shot>;
+    if (shot === "functional-motion-icons") return <Shot><FunctionalMotionIconLab /></Shot>;
+    if (shot === "functional-motion-icons-reduced") return <Shot className="force-reduced-motion"><FunctionalMotionIconLab /></Shot>;
     if (shot === "integration-summary") return <IntegrationSummary />;
     return <LabOverview />;
   })();

@@ -25,5 +25,6 @@
 - 只改任务要求涉及的文件，不顺手重构。
 - 当前正式插件代码和实际运行效果优先于旧截图与历史需求文档。
 - Apple Optical 与 Hero Icon 决策以 `docs/CODEX_HANDOFF.md` 和 Lab README 为准。
+- 当前用户认可的 Apple 竖屏方向位于 `design-lab/apple-prompt-studio/`；它仍是 Mock 原型，未经明确批准不得接入正式插件。
 - 构建前执行 `npm run typecheck` 与 `npm run build`；构建通过不等于浏览器验收通过。
 - 正式交互改动仍需在 Chrome/Edge 加载 `dist` 完成真实流程验收。

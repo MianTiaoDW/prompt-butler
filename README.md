@@ -23,7 +23,7 @@
 
 ---
 
-> **当前开发基准（2026-07-21）**：`origin/main` 仍是旧版。需要继续最新本地功能、视觉与隔离实验时，请检出 `codex/optical-fidelity-lab`，并先阅读 [`docs/CODEX_HANDOFF.md`](docs/CODEX_HANDOFF.md)。该分支尚未合并，不应被旧版 `main` 覆盖。
+> **当前开发基准（2026-07-24）**：`origin/main` 仍是旧版。需要继续最新本地功能、视觉与隔离实验时，请检出 `codex/optical-fidelity-lab`，并先阅读 [`docs/CODEX_HANDOFF.md`](docs/CODEX_HANDOFF.md)。该分支尚未合并，不应被旧版 `main` 覆盖。
 
 ---
 
@@ -132,17 +132,23 @@
 │   ├── lib/              # 工具函数（存储、提示词库、备份等）
 │   └── types/            # TypeScript 类型定义
 ├── native/               # Windows 可选置顶辅助程序
-├── design-lab/           # 与正式插件隔离的视觉实验和截图
+├── design-lab/           # 四套与正式插件隔离的视觉实验和截图
 ├── ui-pattern-atlas/     # 隔离的站内 UI 知识图谱
 ├── icons/                # 扩展图标
 ├── docs/                 # 使用说明与跨设备交接
 ├── manifest.config.ts    # Manifest V3 配置
-├── vite.config.ts        # Vite 构建配置
 ├── tailwind.config.ts    # Tailwind 配置
 └── vite.config.ts        # Vite / CRXJS 构建配置
 ```
 
 完整职责说明见 [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md)。Design Lab 不会进入正式插件构建，除非未来明确迁移。
+
+当前用户认可的竖屏视觉方向位于 [`design-lab/apple-prompt-studio/`](design-lab/apple-prompt-studio/README.md)。它是可操作的独立 Mock，正式插件的功能、存储与 API 行为仍以 `src/` 为准。
+
+```bash
+npm --prefix design-lab/apple-prompt-studio install
+npm --prefix design-lab/apple-prompt-studio run dev
+```
 
 ---
 

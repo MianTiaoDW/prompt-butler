@@ -34,6 +34,8 @@ npm run dev
 | `?shot=button-states` | 主按钮 Default / Hover / Pressed / Loading |
 | `?shot=reduced-motion` | Reduced Motion 强制预览 |
 | `?shot=reduced-transparency` | Reduced Transparency 强制预览 |
+| `?shot=functional-motion-icons` | 搜索、设置、复制、收藏、删除、展开、显隐、下载功能动态图标 |
+| `?shot=functional-motion-icons-reduced` | 功能图标 Reduced Motion 强制预览 |
 | `?shot=integration-summary` | 参考图、生成组件、响应式母版、冻结图标与状态的单张成果汇总板 |
 
 ## Ribbon Icon 冻结与资产路径
@@ -59,6 +61,12 @@ npm run dev
 - Warning / Error：各自独立的克制语义色。
 
 普通搜索、设置、复制、编辑、收藏、删除、文件夹、筛选、排序、返回和更多继续使用 IconSax。Ribbon Glyph 只用于 AI、上传、处理、成功、警告和命令入口。
+
+## Functional Motion Icons V1
+
+首批功能图标覆盖搜索、设置、复制、收藏、删除、展开 / 收起、显示 / 隐藏和下载。实现直接建立在实验室已有 IconSax 上，没有安装完整 AnimateIcons 运行时，也没有改动正式插件图标依赖。动效只承担语义反馈：Hover 轻探、短距离旋转、状态交叉淡入、持久方向切换和一次性完成反馈；不自动循环，不使用弹簧弹跳，不修改六枚冻结 Ribbon Glyph。
+
+Pointer Down 会立即缩放反馈；Hover 动效只在精确指针设备上启用；Reduced Motion 模式会去除旋转、位移和缩放，仅保留 120ms 的颜色与透明度状态变化。
 
 ## 信息架构与滚动
 

@@ -1,6 +1,6 @@
 # 更新日志
 
-## [Unreleased] - 2026-07-21
+## [Unreleased] - 2026-07-24
 
 ### 正式插件
 
@@ -13,11 +13,15 @@
 
 - 增加 Apple Optical Prompt Library 的 420/680/980 原型、状态截图和实现规范。
 - 增加 Optical Fidelity Lab、Hero Icon 多轮候选、可编辑 SVG、原始生产素材及来源核查。
+- Visual Integration Lab 增加搜索、设置、复制、收藏、删除、展开、显隐和下载的功能动态图标实验及 Chromium 验收截图。
+- 增加 Apple Prompt Studio 竖屏交互原型，覆盖创作、提示词库、图像工坊、设置和提示词详情，并实现深黑半透明光学暗色主题。
+- Apple Prompt Studio 不使用六枚冻结 Ribbon Glyph；提示词详情移除显隐与结构展开，关闭、收藏、编辑和删除按最新层级整理。
 - 上述 Lab 尚未迁移到正式插件，候选 Hero 图标也尚未获得最终确认。
 
 ### 交接与验证
 
 - 增加跨设备接续文档，明确 `codex/optical-fidelity-lab` 是合并前的最新开发基准。
+- 更新根入口、项目结构和代理规则，使另一台电脑能识别当前 Apple 视觉优先级、Mock 边界与验证命令。
 - 静态检查与构建结果应记录在交接文档；浏览器真实流程仍需在目标电脑单独验收。
 
 本文件记录每次版本更新的主要变更。

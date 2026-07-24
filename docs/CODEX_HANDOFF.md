@@ -1,6 +1,6 @@
 # Codex 跨设备交接（唯一入口）
 
-更新日期：2026-07-21
+更新日期：2026-07-24
 
 最新开发分支：`codex/optical-fidelity-lab`
 
@@ -9,10 +9,10 @@
 ## 先说结论
 
 - GitHub 的 `origin/main` 目前仍是旧版；不要在公司电脑直接从 `main` 继续。
-- 在当前分支合并前，`origin/codex/optical-fidelity-lab` 是正式插件最新本地功能、当前视觉、两套隔离 Design Lab、测试截图和交接文档的共同基准。
+- 在当前分支合并前，`origin/codex/optical-fidelity-lab` 是正式插件最新功能、四套隔离 Design Lab、测试截图和交接文档的共同基准。
 - Codex 聊天记录和本机安装的 Skill 不由 Git 同步。本文件把继续工作所需的决策和边界写入仓库，公司 Codex 不应依赖旧聊天猜测。
 
-## 公司电脑首次接续
+## 另一台电脑首次接续
 
 ```powershell
 git clone https://github.com/MianTiaoDW/prompt-butler.git
@@ -37,9 +37,9 @@ npm run build
 
 切分支前若 `git status` 有公司电脑自己的修改，不要覆盖；先提交到独立分支或暂存并说明来源。
 
-给公司 Codex 的第一条指令：
+给另一台电脑 Codex 的第一条指令：
 
-> 完整阅读 `AGENTS.md`、`docs/CODEX_HANDOFF.md`、`README.md`，检查当前分支、Git 状态和最近提交。以 `codex/optical-fidelity-lab` 为最新基准，不要用旧版 main 回退。继续前先说明你看到的正式插件状态、Design Lab 边界和尚未完成的浏览器验收。
+> 完整阅读 `AGENTS.md`、`docs/CODEX_HANDOFF.md`、`README.md`，检查当前分支、Git 状态和最近提交。以 `codex/optical-fidelity-lab` 为最新基准，不要用旧版 main 回退。当前用户认可的视觉方向是 `design-lab/apple-prompt-studio/`，正式插件源码仍是功能基准；继续前先说明两者的边界和未完成的正式迁移事项。
 
 ## 仓库中已经保留的内容
 
@@ -64,8 +64,26 @@ npm run build
    - 光学上传、命令栏、Prompt 卡片、AI Processing 与图标系统。
    - 多轮 Hero Icon 候选、可编辑 SVG、100%/小尺寸检查图、原始生产素材和来源审计。
    - 根目录旧命名截图已归档为 `artifacts/optical-fidelity-lab-overview-legacy.png`。
+3. `design-lab/visual-integration-lab-v1/`
+   - 保留 420 / 680 / 980 创作与提示词库母版、Gradient Ribbon Glyph 历史实验和功能动态图标研究。
+   - 新增搜索、设置、复制、收藏、删除、展开、显隐、下载的语义动效页与 Reduced Motion 版本。
+   - `output/playwright/46`–`48` 是该功能图标实验的 Chromium 验收截图。
+4. `design-lab/apple-prompt-studio/`
+   - 当前用户认可的 Apple 竖屏视觉方向；独立运行于 `http://127.0.0.1:4180/`。
+   - 保持创作、提示词库、图像工坊三条主路径，并恢复正式插件的主要功能入口、状态与操作层级。
+   - 提示词详情右上角只保留关闭；收藏、编辑、删除位于正文下方同级操作栏，不再提供多余的显隐和结构展开按钮。
+   - 浅色使用克制的 Frost 表面；暗色使用深黑半透明光学材质、受控红绿环境色和弱内高光。竖屏关闭整窗高成本模糊，只在关键表面保留模糊。
+   - 六枚冻结 Ribbon Glyph 不进入本原型；只使用 IconSax 线性功能图标。
+   - Prompt、图库和生成结果仍为 Mock；只有原型设置写入自己的 `localStorage`，不接 Chrome Storage、Background 或真实 AI API。
 
-两套 Lab 都不连接 Manifest、Content Script、Background、拖动缩放、存储或 API，不得自动迁移到正式插件。
+四套 Lab 都不进入正式插件构建，不得未经用户明确批准自动迁移到 Manifest、Content Script、Background、Chrome Storage 或 API。
+
+## 当前视觉优先级
+
+1. `apple-prompt-studio` 是当前继续迭代的首选视觉原型。
+2. 正式插件 `src/` 是功能、数据流和真实 API 行为基准；不要用原型 Mock 取代它。
+3. `visual-integration-lab-v1` 只作为历史布局、功能图标和冻结 Ribbon Glyph 的研究来源，不再主导当前页面风格。
+4. `apple-optical-library` 与 `optical-fidelity-lab` 作为可追溯研究保留，不自动合并到当前 Apple 竖屏方向。
 
 ## 当前 Hero Icon 决策
 
@@ -115,13 +133,30 @@ npm --prefix design-lab/optical-fidelity-lab install
 node node_modules/vite/bin/vite.js design-lab/optical-fidelity-lab --host 127.0.0.1 --port 4179
 ```
 
-2026-07-21 本地验证：`npm run typecheck`、正式插件 `npm run build`、Apple Optical Library 构建、Optical Fidelity Lab 构建、`ui-pattern-atlas` 构建均通过。Apple 原型构建只有 Framer Motion `use client` 被忽略的非阻塞警告。
+Apple Prompt Studio：
 
-静态构建不能替代 Chrome/Edge 实际验收；公司电脑首次接续后应加载最新 `dist`，至少检查打开工作台、配置状态、提示词生成、收藏、图像工坊、显式保存示例图和可选置顶流程。
+```powershell
+npm --prefix design-lab/apple-prompt-studio install
+npm --prefix design-lab/apple-prompt-studio run build
+npm --prefix design-lab/apple-prompt-studio run dev
+```
+
+Visual Integration Lab：
+
+```powershell
+npm --prefix design-lab/visual-integration-lab-v1 install
+npm --prefix design-lab/visual-integration-lab-v1 run assets
+npm --prefix design-lab/visual-integration-lab-v1 run build
+```
+
+2026-07-24 本地验证：正式插件 `npm run typecheck` 与 `npm run build` 通过；Apple Prompt Studio 生产构建通过；Visual Integration Lab 的 `npm run assets` 与 `npm run build` 通过。在 535 × 698 竖屏视口实操检查 Apple Prompt Studio 的创作、提示词库、收藏夹、图像工坊、模型设置、提示词详情和明暗切换，浏览器无 error / warning；暗色创作页与详情弹层已完成视觉检查。实验页 Tailwind 空 `content` 提示和 Framer Motion 的 `use client` 被 Vite 忽略均为既有非阻塞构建警告。
+
+静态构建不能替代 Chrome/Edge 实际验收；另一台电脑首次接续后若修改正式插件，应加载最新 `dist`，至少检查打开工作台、配置状态、提示词生成、收藏、图像工坊、显式保存示例图和可选置顶流程。
 
 已知但本轮不擅自修改的问题：根 `package.json` 版本为 `1.2.0`，`manifest.config.ts` 仍为 `1.0.3`。这是当前代码中的元数据不一致，不影响本地构建，但下次正式发布前必须统一版本号并明确发布策略。
 
 ## 不进入 GitHub 的内容
 
 - `node_modules/`、所有 `dist/`、本机 `.claude/`、`.firecrawl/`、临时日志、`.env*`、ZIP 与 DOCX。
+- `.playwright-cli/` 和各 Lab 的 `output/build/` 属于本机构建缓存；只有明确作为视觉验收证据的 `output/playwright/*.png` 进入 Git。
 - 这些内容是可再生构建产物、本机私有配置或非源码附件；缺少它们不影响公司电脑从仓库恢复项目。

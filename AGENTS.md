@@ -29,6 +29,7 @@
 
 - 正式插件当前本地视觉是功能基准，不能依据旧 README 或旧截图回退。
 - Apple Optical 与 Hero Icon 的最新方向以 `docs/CODEX_HANDOFF.md` 和各 Lab README 为准。
+- 当前用户认可的 Apple 竖屏方向位于 `design-lab/apple-prompt-studio/`；它仍是 Mock 原型，未经明确批准不得接入正式插件。
 - 普通正文优先可读性；光学材质只用于明确的高层控制和视觉实验，不全局玻璃化。
 
 ## 验证
