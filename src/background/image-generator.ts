@@ -1,5 +1,6 @@
 import type { GeneratedImageAsset, ImageGenerationInput, ImageGenerationResult } from "../types/image";
 import type { ExtensionSettings } from "../types/settings";
+import { getImageConnectionSettings } from "../lib/provider-presets";
 
 let currentGenerationAbort: AbortController | null = null;
 
@@ -19,6 +20,16 @@ function buildUrl(baseUrl: string, path: string) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
   return `${normalizedBaseUrl}${normalizedPath}`;
+}
+
+function usesXingheGptImage2Payload(endpoint: string, model: string) {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    const isXinghe = hostname === "xinghe.xin" || hostname.endsWith(".xinghe.xin");
+    return isXinghe && /^gpt-image-2(?:-all)?$/i.test(model.trim());
+  } catch {
+    return false;
+  }
 }
 
 // 智创聚合API（GPT-Image）仅支持以下尺寸
@@ -94,7 +105,8 @@ function normalizeImageAssets(
     url?: string;
     b64_json?: string;
     revised_prompt?: string;
-  }>
+  }>,
+  mimeType = "image/png"
 ) {
   const assets: GeneratedImageAsset[] = [];
 
@@ -103,7 +115,7 @@ function normalizeImageAssets(
       assets.push({
         id: `image-${Date.now()}-${index}`,
         url: item.url,
-        mimeType: "image/png",
+        mimeType,
         revisedPrompt: item.revised_prompt
       });
       return;
@@ -112,8 +124,8 @@ function normalizeImageAssets(
     if (item.b64_json) {
       assets.push({
         id: `image-${Date.now()}-${index}`,
-        url: `data:image/png;base64,${item.b64_json}`,
-        mimeType: "image/png",
+        url: `data:${mimeType};base64,${item.b64_json}`,
+        mimeType,
         revisedPrompt: item.revised_prompt
       });
     }
@@ -139,62 +151,36 @@ function resolveImageEndpoints(baseUrl: string): string[] {
   return [...new Set(paths)];
 }
 
-async function fetchWithRetry(
+async function fetchImageOnce(
   url: string,
-  options: RequestInit & { cancelSignal?: AbortSignal },
-  maxRetries = 2
+  options: RequestInit & { cancelSignal?: AbortSignal }
 ): Promise<Response> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    // 检查外部取消信号
-    if (options.cancelSignal?.aborted) {
-      throw new DOMException("已取消生图请求。", "AbortError");
-    }
-
-    try {
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort(), 300000);
-
-      // 合并外部取消信号和内部超时信号
-      const onExternalAbort = () => timeoutController.abort();
-      options.cancelSignal?.addEventListener("abort", onExternalAbort, { once: true });
-
-      const mergedOptions: RequestInit = {
-        ...options,
-        signal: timeoutController.signal,
-      };
-
-      try {
-        const response = await fetch(url, mergedOptions);
-        return response;
-      } finally {
-        clearTimeout(timeoutId);
-        options.cancelSignal?.removeEventListener("abort", onExternalAbort);
-      }
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      const isAbort = lastError.message.includes("abort") || lastError.message.includes("AbortError")
-        || (error instanceof DOMException && error.name === "AbortError");
-
-      // 外部取消不重试
-      if (isAbort) throw lastError;
-
-      const isNetworkError =
-        lastError.message.includes("Failed to fetch") ||
-        lastError.message.includes("NetworkError") ||
-        (lastError.name === "TypeError");
-
-      if (isNetworkError && attempt < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt), 4000);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-      throw lastError;
-    }
+  if (options.cancelSignal?.aborted) {
+    throw new DOMException("已取消生图请求。", "AbortError");
   }
 
-  throw lastError ?? new Error("请求失败");
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), 300000);
+  const onExternalAbort = () => timeoutController.abort();
+  const { cancelSignal, ...requestOptions } = options;
+  cancelSignal?.addEventListener("abort", onExternalAbort, { once: true });
+
+  try {
+    return await fetch(url, {
+      ...requestOptions,
+      signal: timeoutController.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+    cancelSignal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+class ImageEndpointError extends Error {
+  constructor(message: string, readonly canTryAlternateEndpoint: boolean) {
+    super(message);
+    this.name = "ImageEndpointError";
+  }
 }
 
 async function requestSingleImage(
@@ -202,16 +188,18 @@ async function requestSingleImage(
   input: ImageGenerationInput,
   endpoint: string
 ): Promise<GeneratedImageAsset[]> {
+  const imageConnection = getImageConnectionSettings(settings);
+  const useXinghePayload = usesXingheGptImage2Payload(endpoint, settings.imageModel);
   // 每次请求创建新的 AbortController（如果还没有外部取消的）
   if (!currentGenerationAbort || currentGenerationAbort.signal.aborted) {
     currentGenerationAbort = new AbortController();
   }
 
   try {
-    const response = await fetchWithRetry(endpoint, {
+    const response = await fetchImageOnce(endpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${settings.apiKey}`,
+        Authorization: `Bearer ${imageConnection.apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -219,13 +207,19 @@ async function requestSingleImage(
         prompt: input.prompt,
         n: 1,
         size: mapSize(input.aspectRatio, input.resolution),
-        response_format: "url"
+        ...(useXinghePayload
+          ? { quality: "low", format: "jpeg" }
+          : { response_format: "url" })
       }),
       cancelSignal: currentGenerationAbort.signal
     });
 
     if (!response.ok) {
-      throw new Error(await parseErrorMessage(response));
+      const errorMessage = await parseErrorMessage(response);
+      throw new ImageEndpointError(
+        `HTTP ${response.status}：${errorMessage}`,
+        response.status === 404 || response.status === 405
+      );
     }
 
     const contentType = response.headers.get("content-type") ?? "";
@@ -241,7 +235,7 @@ async function requestSingleImage(
       }>;
     };
 
-    const images = normalizeImageAssets(data.data ?? []);
+    const images = normalizeImageAssets(data.data ?? [], useXinghePayload ? "image/jpeg" : "image/png");
     if (images.length === 0) {
       throw new Error("接口返回成功但未包含图片数据。");
     }
@@ -264,7 +258,8 @@ async function generateWithOpenAiCompatible(
   settings: ExtensionSettings,
   input: ImageGenerationInput
 ) {
-  const endpoints = resolveImageEndpoints(settings.baseUrl);
+  const imageConnection = getImageConnectionSettings(settings);
+  const endpoints = resolveImageEndpoints(imageConnection.baseUrl);
 
   let workingEndpoint = "";
   let probeImages: GeneratedImageAsset[] = [];
@@ -278,6 +273,9 @@ async function generateWithOpenAiCompatible(
       break;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("生图请求失败。");
+      if (!(error instanceof ImageEndpointError && error.canTryAlternateEndpoint)) {
+        break;
+      }
     }
   }
 
@@ -315,14 +313,28 @@ export async function generateImagesWithProvider(
   input: ImageGenerationInput
 ): Promise<ImageGenerationResult> {
   const generatedAt = new Date().toISOString();
+  const imageConnection = getImageConnectionSettings(settings);
+  const hasDedicatedImageConnection = Boolean(
+    settings.imageApiKey?.trim() || settings.imageBaseUrl?.trim()
+  );
 
-  if (!settings.apiKey.trim()) {
+  if (!imageConnection.apiKey) {
     return {
       ok: false,
       provider: settings.provider,
       model: settings.imageModel,
       generatedAt,
-      message: "API Key 为空，无法发起生图。"
+      message: "未配置生图 API Key，请前往设置页补充。"
+    };
+  }
+
+  if (!imageConnection.baseUrl) {
+    return {
+      ok: false,
+      provider: settings.provider,
+      model: settings.imageModel,
+      generatedAt,
+      message: "未配置生图 Base URL，请前往设置页补充。"
     };
   }
 
@@ -336,7 +348,7 @@ export async function generateImagesWithProvider(
     };
   }
 
-  if (settings.provider === "claude" || settings.provider === "kimi" || settings.provider === "deepseek") {
+  if (!hasDedicatedImageConnection && (settings.provider === "claude" || settings.provider === "kimi" || settings.provider === "deepseek")) {
     return {
       ok: false,
       provider: settings.provider,

@@ -20,7 +20,13 @@ async function buildBackup(): Promise<PromptBackup> {
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
-    favorites,
+    // JSON 备份不包含 IndexedDB Blob，避免在另一设备导入无效图片 ID。
+    favorites: favorites.map((record) => ({
+      ...record,
+      linkedImages: [],
+      exampleImageIds: [],
+      imageStorageVersion: 2
+    })),
     folders,
     customTabs
   };
@@ -70,7 +76,9 @@ export async function importPromptsFromJson(file: File): Promise<{
 
   // 合并：保留已有 + 新增导入（按 id 去重）
   const existingIds = new Set(existingFavorites.map((r) => r.id));
-  const newFavorites = backup.favorites.filter((r) => !existingIds.has(r.id));
+  const newFavorites = backup.favorites
+    .filter((r) => !existingIds.has(r.id))
+    .map((record) => ({ ...record, linkedImages: [], exampleImageIds: [], imageStorageVersion: 2 as const }));
   const mergedFavorites = [...newFavorites, ...existingFavorites];
 
   const existingFolderIds = new Set(existingFolders.map((f) => f.id));

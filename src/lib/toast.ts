@@ -1,4 +1,10 @@
-type ToastListener = (message: string) => void;
+export interface ToastEvent {
+  id: number;
+  message: string;
+  tone: "info" | "error";
+}
+
+type ToastListener = (event: ToastEvent) => void;
 
 let listener: ToastListener | null = null;
 
@@ -9,6 +15,6 @@ export function subscribeToast(fn: ToastListener) {
   };
 }
 
-export function showToast(message: string) {
-  listener?.(message);
+export function showToast(message: string, tone: ToastEvent["tone"] = "info") {
+  listener?.({ id: Date.now(), message, tone });
 }

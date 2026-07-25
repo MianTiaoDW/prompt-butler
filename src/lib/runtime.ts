@@ -49,6 +49,7 @@ export function sendRuntimeMessageLong<TResponse>(
 ): Promise<TResponse> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let poll: ReturnType<typeof setInterval> | null = null;
 
     // 打开长连接端口，防止 Service Worker 因闲置被杀
     const keepAlivePort = chrome.runtime.connect({ name: "long-task" });
@@ -57,12 +58,14 @@ export function sendRuntimeMessageLong<TResponse>(
     });
 
     const cleanup = () => {
-      keepAlivePort.disconnect();
-      clearInterval(poll);
+      if (poll) clearInterval(poll);
+      poll = null;
+      try {
+        keepAlivePort.disconnect();
+      } catch {
+        // Port 已随 Popup 关闭或 Worker 重启断开。
+      }
     };
-    keepAlivePort.onDisconnect.addListener(() => {
-      // Worker 断开时不做失败处理，依赖轮询兜底
-    });
 
     // 先尝试 sendMessage（Worker 活跃时最快）
     chrome.runtime.sendMessage(message, (response: TResponse) => {
@@ -77,7 +80,7 @@ export function sendRuntimeMessageLong<TResponse>(
     // 同时启动轮询（Worker 被杀后靠这个拿到结果）
     let attempts = 0;
     const maxAttempts = 150; // 最多轮询 150 次（300 秒）
-    const poll = setInterval(async () => {
+    poll = setInterval(async () => {
       if (settled) {
         cleanup();
         return;

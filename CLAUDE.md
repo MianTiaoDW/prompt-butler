@@ -1,43 +1,30 @@
-# 提示词生成管家 - 项目规范
+# 提示词生成管家 - 项目规则
 
-## 项目简介
-Chrome/Edge 浏览器扩展（Manifest V3），用于 AI 提示词生成、收藏管理和图像生成。暗黑毛玻璃风格 UI。
+本文件与 `AGENTS.md` 保持一致，供另一台电脑上的编码代理读取。
 
-## 技术栈
-- React 18 + TypeScript + Vite
-- Tailwind CSS + framer-motion
-- react-rnd（悬浮窗拖拽）
-- @crxjs/vite-plugin（Manifest V3 构建）
-- chrome.storage.local（数据持久化）
+## 开始工作前
 
-## 开发命令
-```bash
-npm install        # 安装依赖
-npm run dev        # 开发模式（自动构建到 dist）
-npm run build      # 生产构建
-```
+1. 阅读 `docs/CODEX_HANDOFF.md`。
+2. 执行 `git status --short --branch` 和 `git log -5 --oneline --decorate`。
+3. 当前可接续分支是 `codex/optical-fidelity-lab`；在合并前，不得以旧版 `origin/main` 覆盖它。
 
-## 架构要点
-- `src/background/` — Service Worker，处理所有 LLM/生图 API 请求（解决跨域）
-- `src/options/` — 配置中心页面（Options Page）
-- `src/content/` — 注入网页的悬浮窗 UI
-- `src/hooks/` — chrome.storage.local 封装
-- `src/lib/` — 常量、工具函数、运行时消息封装
-- `src/types/` — TypeScript 类型定义
+## 核心约束
 
-## 编码规范
-- 组件用函数式 + hooks，不用 class 组件
-- 样式用 Tailwind CSS 工具类，不写自定义 CSS（除非必要）
-- 图标统一用 lucide-react
-- 状态管理用自定义 hook 封装 chrome.storage.local，不引入外部状态库
-- 所有 AI 请求走 background service worker，content script 通过 runtime message 通信
+- Chrome/Edge Manifest V3；正式名称为“提示词生成管家”。
+- React 18、TypeScript、Vite、Tailwind CSS、Framer Motion、react-rnd、CRXJS。
+- 所有 AI 请求经 Background Service Worker；Content Script 不直连外部 API。
+- 设置和提示词使用 `chrome.storage.local`，会话状态使用 `chrome.storage.session`，持久示例图 Blob 使用扩展 Origin IndexedDB。
+- 正式插件图标沿用 `lucide-react`；Design Lab 依赖保持隔离。
+- 不新增账号、云同步、容量、在线状态等未经确认的能力。
+- `design-lab/` 与 `ui-pattern-atlas/` 不得自动接入正式插件。
+- 生成结果保持临时；只有用户明确保存才持久化。
+- 不提交密钥、本机配置、依赖目录、构建输出或临时日志。
 
-## UI 风格
-- 暗黑模式，深灰/黑色背景
-- 毛玻璃特效（backdrop-blur + 半透明背景）
-- 圆角设计，极简高级感
-- 强调色：荧光绿/渐变色
+## 工作方式
 
-## 验证方式
-- `npm run build` 确认构建无报错
-- 在 Chrome 中加载 `dist` 目录测试扩展功能
+- 只改任务要求涉及的文件，不顺手重构。
+- 当前正式插件代码和实际运行效果优先于旧截图与历史需求文档。
+- Apple Optical 与 Hero Icon 决策以 `docs/CODEX_HANDOFF.md` 和 Lab README 为准。
+- 当前用户认可的 Apple 竖屏方向位于 `design-lab/apple-prompt-studio/`；它仍是 Mock 原型，未经明确批准不得接入正式插件。
+- 构建前执行 `npm run typecheck` 与 `npm run build`；构建通过不等于浏览器验收通过。
+- 正式交互改动仍需在 Chrome/Edge 加载 `dist` 完成真实流程验收。

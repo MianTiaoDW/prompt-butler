@@ -1,110 +1,301 @@
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { CheckCircle2, ChevronDown, Cpu, DatabaseZap, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Activity, ArrowLeft, BrainCircuit, Check, ChevronDown, DatabaseZap, Eye, EyeOff, X } from "lucide-react";
 
 import {
   applyDetectedModelCatalog,
   buildSettingsFromProvider,
   getEffectiveModelCatalog,
+  getImageConnectionSettings,
   getProviderPreset,
   hasConnectionCredentials,
   isSettingsConfigured,
   providerOptions
 } from "../lib/provider-presets";
 import { sendRuntimeMessage } from "../lib/runtime";
+import { MOTION } from "../lib/motion";
 import { useExtensionSettings } from "../hooks/useExtensionSettings";
 import { IMAGE_ASPECT_RATIOS, IMAGE_COUNTS, IMAGE_RESOLUTIONS } from "../types/settings";
 import type { ExtensionSettings } from "../types/settings";
 import type { ConnectionTestResult, ModelDetectionResult } from "../types/runtime";
+import { cleanupExampleImages, getExampleImageUsage } from "../lib/example-images";
+import { storageGet } from "../lib/storage";
+import { PROMPT_STORAGE_KEYS } from "../lib/prompt-library";
+import type { SavedPromptRecord } from "../types/prompt";
 
-const cards = [
-  {
-    title: "服务商配置",
-    description: "服务商切换会自动带出 Base URL、模型预设和状态复位逻辑。"
-  },
-  {
-    title: "模型参数",
-    description: "推理模型、视觉模型、生图模型、分辨率与数量都已接入统一配置状态。"
-  },
-  {
-    title: "状态联动",
-    description: "Options 页与 Content Script 会通过 chrome.storage.local 实时共享配置。"
-  }
-];
+type ModelField = "reasoningModel" | "visionModel" | "imageModel";
 
-const icons = [ShieldCheck, Cpu, SlidersHorizontal] as const;
+function formatMegabytes(bytes: number) {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
 
-function formatSavedTime(timestamp: string | null) {
-  if (!timestamp) {
-    return "尚未写入";
-  }
+function ExampleImageStorageSettings() {
+  const [usage, setUsage] = useState({ usedBytes: 0, limitBytes: 30 * 1024 * 1024, imageCount: 0 });
+  const [message, setMessage] = useState("");
+  const refresh = () => void getExampleImageUsage().then(setUsage).catch(() => setMessage("无法读取示例图存储状态。"));
+  useEffect(refresh, []);
+  const cleanup = async () => {
+    try {
+      const prompts = await storageGet<SavedPromptRecord[]>(PROMPT_STORAGE_KEYS.favorites, []);
+      const result = await cleanupExampleImages(prompts.map((prompt) => prompt.id));
+      setMessage(result.deleted ? `已清理 ${result.deleted} 条无效图片数据。` : "没有发现无效图片数据。");
+      refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "清理失败，请重试。");
+    }
+  };
+  return (
+    <div className="settings-form-section">
+      <div className="settings-section-heading"><h3>示例图存储</h3><p>只保存用户主动添加的压缩预览图，软上限为 30MB。</p></div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/15 p-4">
+        <div><strong className="text-sm text-primary">已使用 {formatMegabytes(usage.usedBytes)} / {formatMegabytes(usage.limitBytes)}</strong><p className="mt-1 text-xs text-tertiary">共 {usage.imageCount} 张示例图</p></div>
+        <div className="flex gap-2"><button type="button" className="ghost-button px-3 py-2 text-xs" onClick={() => window.open(chrome.runtime.getURL("options.html?view=app"), "_blank")}>管理</button><button type="button" className="ghost-button px-3 py-2 text-xs" onClick={() => void cleanup()}>清理无效数据</button></div>
+      </div>
+      {message ? <p className="mt-2 text-xs text-secondary">{message}</p> : null}
+    </div>
+  );
+}
 
+interface ModelComboboxProps {
+  id: string;
+  label: string;
+  options: string[];
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function ModelCombobox({
+  id,
+  label,
+  options,
+  placeholder,
+  value,
+  onChange
+}: ModelComboboxProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const filteredOptions = query.trim()
+    ? options.filter((option) => option.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  const selectModel = (model: string) => {
+    onChange(model);
+    setQuery("");
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="block" ref={rootRef}>
+      <label htmlFor={id} className="settings-field-label">{label}</label>
+      <div className="model-combobox">
+        <input
+          id={id}
+          role="combobox"
+          aria-expanded={isOpen}
+          aria-controls={`${id}-listbox`}
+          aria-autocomplete="list"
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setQuery(event.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => {
+            setQuery("");
+            setIsOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setIsOpen(false);
+            if (event.key === "ArrowDown") setIsOpen(true);
+            if (event.key === "Enter" && isOpen && filteredOptions.length === 1) {
+              event.preventDefault();
+              selectModel(filteredOptions[0]);
+            }
+          }}
+          placeholder={placeholder}
+          className="form-field settings-control model-combobox-input"
+        />
+        <button
+          type="button"
+          className="model-combobox-trigger"
+          aria-label={`展开${label}列表`}
+          aria-expanded={isOpen}
+          onClick={() => {
+            setQuery("");
+            setIsOpen((current) => !current);
+          }}
+        >
+          <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+
+        {isOpen ? (
+          <div id={`${id}-listbox`} role="listbox" className="model-combobox-menu">
+            {filteredOptions.length > 0 ? filteredOptions.map((model) => (
+              <button
+                key={model}
+                type="button"
+                role="option"
+                aria-selected={model === value}
+                className="model-combobox-option"
+                onClick={() => selectModel(model)}
+              >
+                <span>{model}</span>
+                {model === value ? <Check className="h-4 w-4" /> : null}
+              </button>
+            )) : (
+              <div className="model-combobox-empty">没有匹配项，可直接输入模型 ID</div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function formatTestTime(timestamp: string | null) {
+  if (!timestamp) return "尚未测试";
   const date = new Date(timestamp);
-
-  if (Number.isNaN(date.getTime())) {
-    return "尚未写入";
-  }
-
-  return `${date.toLocaleDateString("zh-CN")} ${date.toLocaleTimeString("zh-CN", {
+  if (Number.isNaN(date.getTime())) return "尚未测试";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit"
-  })}`;
+  });
 }
 
 export function OptionsApp() {
-  const {
-    settings,
-    providerPreset,
-    isLoading,
-    error,
-    isServiceReady,
-    lastSyncedAt,
-    updateSettings,
-    setConnectionStatus
-  } = useExtensionSettings();
+  const shouldReduceMotion = useReducedMotion();
+  const showUnsupportedNotice = new URLSearchParams(window.location.search).get("notice") === "unsupported";
+  const { settings, isLoading, error, updateSettings } = useExtensionSettings();
   const [draftSettings, setDraftSettings] = useState<ExtensionSettings>(settings);
-  const [panelMessage, setPanelMessage] = useState("请先完成服务商、API Key、Base URL 和模型配置，再保存并测试连接。");
+  const [panelMessage, setPanelMessage] = useState("完成服务连接与模型配置后，可以保存并测试连接。");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isDetectingModels, setIsDetectingModels] = useState(false);
+  const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
+  const [isImageApiKeyVisible, setIsImageApiKeyVisible] = useState(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftProviderPreset = getProviderPreset(draftSettings.provider);
   const effectiveDraftCatalog = getEffectiveModelCatalog(draftSettings);
+  const iconUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL
+    ? chrome.runtime.getURL("icons/icon48.png")
+    : "/icons/icon48.png";
 
   useEffect(() => {
     setDraftSettings(settings);
   }, [settings]);
 
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+
+  const showToast = (message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => setToastMessage(null), 2400);
+  };
+
   const isDraftConfigured = isSettingsConfigured(draftSettings);
   const hasDraftConnectionCredentials = hasConnectionCredentials(draftSettings);
+  const imageConnection = getImageConnectionSettings(draftSettings);
   const isDirty = JSON.stringify(draftSettings) !== JSON.stringify(settings);
+  const connectionFieldsChanged =
+    draftSettings.provider !== settings.provider ||
+    draftSettings.apiKey !== settings.apiKey ||
+    draftSettings.baseUrl !== settings.baseUrl;
+  const displayedLastTestAt = connectionFieldsChanged ? null : settings.lastValidatedAt;
+  const connectionStatus = isTestingConnection
+    ? "testing"
+    : connectionFieldsChanged
+      ? "idle"
+      : settings.connectionStatus;
 
-  const statusText = isLoading
-    ? "正在同步本地配置"
-    : isTestingConnection || settings.connectionStatus === "testing"
-      ? "正在测试连接"
-    : isServiceReady
-      ? "服务已就绪"
-      : isDraftConfigured
-        ? "等待连通测试"
-        : "配置未就绪";
+  const connectionStatusLabel = isLoading
+    ? "正在同步"
+    : connectionStatus === "testing"
+      ? "测试中"
+      : connectionStatus === "success"
+        ? "连接成功"
+        : connectionStatus === "error"
+          ? "连接失败"
+          : "尚未测试";
 
-  const handleSave = async () => {
-    await updateSettings({
-      ...draftSettings,
+  const modelRecognitionLabel = isDetectingModels
+    ? "识别中"
+    : draftSettings.lastModelDetectionAt
+      ? `推理 ${effectiveDraftCatalog.reasoning.length} / 视觉 ${effectiveDraftCatalog.vision.length} / 生图 ${effectiveDraftCatalog.image.length}`
+      : "未识别";
+
+  const modelFields = useMemo(() => [
+    {
+      field: "reasoningModel" as const,
+      label: "推理模型",
+      placeholder: "选择或输入推理模型 ID",
+      options: effectiveDraftCatalog.reasoning
+    },
+    {
+      field: "visionModel" as const,
+      label: "视觉模型",
+      placeholder: "选择或输入视觉模型 ID",
+      options: effectiveDraftCatalog.vision
+    },
+    {
+      field: "imageModel" as const,
+      label: "生图模型",
+      placeholder: "选择或输入生图模型 ID",
+      options: effectiveDraftCatalog.image
+    }
+  ], [effectiveDraftCatalog]);
+
+  const updateConnectionDraft = (patch: Partial<ExtensionSettings>) => {
+    setDraftSettings((current) => ({
+      ...current,
+      ...patch,
       connectionStatus: "idle",
       lastValidatedAt: null
-    });
-    setPanelMessage("配置已保存到 chrome.storage.local，悬浮窗会立即收到更新。");
+    }));
+  };
+
+  const updateImageConnectionDraft = (patch: Pick<Partial<ExtensionSettings>, "imageApiKey" | "imageBaseUrl">) => {
+    setDraftSettings((current) => ({ ...current, ...patch }));
+  };
+
+  const handleSave = async () => {
+    const nextSettings: ExtensionSettings = {
+      ...draftSettings,
+      connectionStatus: connectionFieldsChanged ? "idle" : settings.connectionStatus,
+      lastValidatedAt: connectionFieldsChanged ? null : settings.lastValidatedAt
+    };
+    await updateSettings(nextSettings);
+    setPanelMessage("");
+    showToast("配置已保存，并已同步到插件主界面");
   };
 
   const handleReset = () => {
     setDraftSettings(settings);
-    setPanelMessage("表单已恢复为最近一次保存的配置。");
+    setPanelMessage("已恢复上次保存的配置。");
   };
 
   const handleProviderChange = (provider: ExtensionSettings["provider"]) => {
-    const nextDraftSettings = buildSettingsFromProvider(provider, draftSettings);
+    const nextDraftSettings = {
+      ...buildSettingsFromProvider(provider, draftSettings),
+      connectionStatus: "idle" as const,
+      lastValidatedAt: null
+    };
     setDraftSettings(nextDraftSettings);
-    setPanelMessage("已切换服务商预设。");
+    setPanelMessage("已切换服务商预设，请确认连接信息和模型。");
 
     if (hasConnectionCredentials(nextDraftSettings)) {
       void handleDetectModels(nextDraftSettings);
@@ -113,14 +304,12 @@ export function OptionsApp() {
 
   const handleDetectModels = async (settingsToDetect: ExtensionSettings = draftSettings) => {
     setIsDetectingModels(true);
-    setPanelMessage("正在自动识别当前 API / Base URL 可用的模型列表...");
+    setPanelMessage("正在识别当前服务可用的模型列表…");
 
     try {
       const result = await sendRuntimeMessage<ModelDetectionResult>({
         type: "provider:detect-models",
-        payload: {
-          settings: settingsToDetect
-        }
+        payload: { settings: settingsToDetect }
       });
 
       if (!result.ok || !result.catalog) {
@@ -128,12 +317,11 @@ export function OptionsApp() {
         return;
       }
 
-      const nextDraftSettings = applyDetectedModelCatalog(settingsToDetect, result.catalog);
-      setDraftSettings(nextDraftSettings);
-      setPanelMessage(`${result.message} 已同步回当前表单。`);
-    } catch (error) {
+      setDraftSettings(applyDetectedModelCatalog(settingsToDetect, result.catalog));
+      setPanelMessage(`${result.message} 已更新到当前表单。`);
+    } catch (requestError) {
       setPanelMessage(
-        error instanceof Error ? `模型识别失败：${error.message}` : "模型识别失败。"
+        requestError instanceof Error ? `模型识别失败：${requestError.message}` : "模型识别失败。"
       );
     } finally {
       setIsDetectingModels(false);
@@ -141,506 +329,482 @@ export function OptionsApp() {
   };
 
   const handleTestConnection = async () => {
+    if (isTestingConnection) return;
     setIsTestingConnection(true);
-    setPanelMessage("正在通过 Background Service Worker 发起连接测试...");
+    setPanelMessage("正在测试模型服务连接…");
 
     const testingSettings: ExtensionSettings = {
       ...draftSettings,
       connectionStatus: "testing",
-      lastValidatedAt: null
+      lastValidatedAt: settings.lastValidatedAt
     };
-
     await updateSettings(testingSettings);
 
     try {
       const result = await sendRuntimeMessage<ConnectionTestResult>({
         type: "provider:test-connection",
-        payload: {
-          settings: testingSettings
-        }
+        payload: { settings: testingSettings }
       });
-
       const nextSettings: ExtensionSettings = {
         ...testingSettings,
         connectionStatus: result.ok ? "success" : "error",
-        lastValidatedAt: result.ok ? result.checkedAt : null
+        lastValidatedAt: result.checkedAt
       };
 
       await updateSettings(nextSettings);
       setDraftSettings(nextSettings);
       setPanelMessage(
         result.ok
-          ? `连接测试通过，已验证端点：${result.checkedUrl}`
-          : `连接测试失败（${result.status || "网络错误"}）：${result.message}`
+          ? `连接成功，已访问：${result.checkedUrl}`
+          : `连接失败（${result.status || "网络错误"}）：${result.message}`
       );
-    } catch (error) {
-      await updateSettings({
+    } catch (requestError) {
+      const failedSettings: ExtensionSettings = {
         ...testingSettings,
         connectionStatus: "error",
-        lastValidatedAt: null
-      });
+        lastValidatedAt: new Date().toISOString()
+      };
+      await updateSettings(failedSettings);
+      setDraftSettings(failedSettings);
       setPanelMessage(
-        error instanceof Error ? `连接测试失败：${error.message}` : "连接测试失败。"
+        requestError instanceof Error ? `连接失败：${requestError.message}` : "连接失败。"
       );
     } finally {
       setIsTestingConnection(false);
     }
   };
 
+  const returnToBrowser = () => {
+    window.close();
+    window.setTimeout(() => showToast("请切换到普通网页，再点击浏览器工具栏中的扩展图标"), 80);
+  };
+
+  const apiKeyIsSaved = Boolean(settings.apiKey) && draftSettings.apiKey === settings.apiKey;
+  const imageApiKeyIsSaved = Boolean(settings.imageApiKey) && draftSettings.imageApiKey === settings.imageApiKey;
+  const connectionToneClass = connectionStatus === "success"
+    ? "text-accent"
+    : connectionStatus === "error"
+      ? "text-rose-300"
+      : connectionStatus === "testing"
+        ? "text-amber-300"
+        : "text-secondary";
+
   return (
-    <main className="aurora-bg min-h-screen px-6 py-10 text-white">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mx-auto flex w-full max-w-6xl flex-col gap-6"
-      >
-        <section className="aurora-shell rounded-[1.75rem] px-8 py-10">
-          <div className="max-w-3xl">
-            <div className="bg-gradient-to-r from-accent to-accent-soft bg-clip-text text-4xl font-semibold tracking-[0.02em] text-transparent md:text-5xl">
-              CYGJ模型配置中心
+    <main className="settings-page min-h-screen bg-canvas text-primary">
+      <header className="settings-app-bar">
+        <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between gap-4 px-6 md:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <img src={iconUrl} alt="" className="h-9 w-9 rounded-[var(--radius-small)]" />
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-semibold tracking-[-0.02em]">提示词生成管家</div>
+              <div className="text-xs text-tertiary">设置 / 模型连接</div>
             </div>
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-white/65">
-              这里进行模型配置，输入模型服务商的API Key,然后依次输入/选择要配置的推理模型，视觉模型，生图模型
-            </p>
-            <div className="mt-6 flex flex-wrap gap-3 text-sm">
-              <div className="rounded-full border border-white/10 bg-white/[0.07] px-4 py-2 text-white/70">
-                状态：{statusText}
-              </div>
-              <div className="rounded-full border border-white/10 bg-white/[0.07] px-4 py-2 text-white/70">
-                最近同步：{formatSavedTime(lastSyncedAt)}
-              </div>
+          </div>
+          <button type="button" onClick={returnToBrowser} className="ghost-button h-10 shrink-0 px-3">
+            <ArrowLeft className="h-4 w-4" />
+            返回主界面
+          </button>
+        </div>
+      </header>
+
+      {showUnsupportedNotice ? (
+        <div className="settings-restricted-notice" role="status">
+          <strong>当前页面不支持打开悬浮工作台</strong>
+          <span>请切换到普通网页后再次点击扩展图标。你仍可在此页面完成模型与 API Key 设置。</span>
+        </div>
+      ) : null}
+
+      <motion.div
+        initial={{ opacity: 0, y: shouldReduceMotion ? 0 : 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: shouldReduceMotion ? 0.06 : MOTION.pageMs / 1000, ease: MOTION.easeOut }}
+        className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8 md:px-8 md:py-10"
+      >
+        <section>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium text-tertiary">设置</p>
+              <h1 className="mt-2 text-[30px] font-semibold tracking-[-0.035em] text-primary">模型连接</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">
+                配置模型服务，并为提示词、视觉理解和图像生成指定模型。
+              </p>
+            </div>
+            <div className="settings-status-pill">
+              <span className={`connection-status-dot ${
+                connectionStatus === "success"
+                  ? "connection-status-dot-online"
+                  : connectionStatus === "testing"
+                    ? "connection-status-dot-testing"
+                    : connectionStatus === "error"
+                      ? "connection-status-dot-error"
+                      : "connection-status-dot-idle"
+              }`} />
+              {connectionStatusLabel}
             </div>
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          {cards.map((card, index) => {
-            const Icon = icons[index];
-
-            return (
-              <article
-                key={card.title}
-                className="glass-card p-6"
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-900">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h2 className="mt-5 text-xl font-medium text-white">{card.title}</h2>
-                <p className="mt-3 text-sm leading-6 text-white/60">{card.description}</p>
-              </article>
-            );
-          })}
-        </section>
-
-        <section className="grid gap-6 xl:grid-cols-[1.6fr_0.9fr]">
-          <article className="glass-card p-7">
-            <div className="flex items-center justify-between gap-4">
+        <section className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+          <article className="glass-card min-w-0 p-5 md:p-7">
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <div className="text-xs uppercase tracking-[0.26em] text-white/40">
-                  Storage Workbench
-                </div>
-                <h2 className="mt-2 text-2xl font-semibold text-white">服务商与模型预设</h2>
+                <p className="text-xs font-medium text-tertiary">连接配置</p>
+                <h2 className="mt-2 text-[21px] font-semibold tracking-[-0.025em]">服务连接与模型</h2>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-right text-xs text-white/55">
-                <div>Provider</div>
-                <div className="mt-1 text-sm text-accent">{draftProviderPreset.label}</div>
+              <div className="settings-provider-chip">
+                <span>当前服务商</span>
+                <strong>{draftProviderPreset.label}</strong>
               </div>
             </div>
 
-            <div className="mt-6 grid gap-5 md:grid-cols-2">
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">服务商</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.provider}
-                    onChange={(event) => {
-                      handleProviderChange(event.target.value as ExtensionSettings["provider"]);
-                    }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    {providerOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-950 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+            <div className="settings-form-section mt-6">
+              <div className="settings-section-heading">
+                <h3>服务连接</h3>
+                <p>用于连接模型服务的服务商、凭证与地址。</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="settings-field-label">服务商</span>
+                  <div className="relative">
+                    <select
+                      value={draftSettings.provider}
+                      onChange={(event) => handleProviderChange(event.target.value as ExtensionSettings["provider"])}
+                      className="form-field settings-control appearance-none pr-10"
+                    >
+                      {providerOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tertiary" />
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className="settings-field-label">
+                    API Key
+                    <span className={apiKeyIsSaved ? "text-accent" : "text-tertiary"}>
+                      {apiKeyIsSaved ? "已保存" : "未保存"}
+                    </span>
+                  </span>
+                  <div className="relative">
+                    <input
+                      type={isApiKeyVisible ? "text" : "password"}
+                      value={draftSettings.apiKey}
+                      onChange={(event) => updateConnectionDraft({ apiKey: event.target.value })}
+                      placeholder="输入 API Key"
+                      className="form-field settings-control pr-[76px]"
+                    />
+                    <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+                      <button
+                        type="button"
+                        className="settings-field-action"
+                        onClick={() => setIsApiKeyVisible((current) => !current)}
+                        aria-label={isApiKeyVisible ? "隐藏 API Key" : "显示 API Key"}
+                      >
+                        {isApiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-field-action"
+                        onClick={() => updateConnectionDraft({ apiKey: "" })}
+                        aria-label="清空 API Key"
+                        disabled={!draftSettings.apiKey}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </label>
+
+                <label className="block md:col-span-2">
+                  <span className="settings-field-label">Base URL</span>
+                  <input
+                    type="url"
+                    value={draftSettings.baseUrl}
+                    onChange={(event) => updateConnectionDraft({
+                      baseUrl: event.target.value,
+                      detectedModelCatalog: null,
+                      lastModelDetectionAt: null
+                    })}
+                    placeholder="输入或覆盖默认 Base URL"
+                    className="form-field settings-control"
+                  />
+                </label>
+
+                <div className="md:col-span-2 border-t border-[var(--border-subtle)] pt-4">
+                  <h4 className="text-sm font-semibold text-primary">生图专用配置</h4>
+                  <p className="mt-1 text-xs leading-5 text-tertiary">
+                    填写后仅用于图片生成；留空时自动回退使用上方通用配置。
+                  </p>
                 </div>
-              </label>
 
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">API Key</span>
-                <input
-                  type="password"
-                  value={draftSettings.apiKey}
-                  onChange={(event) => {
-                    setDraftSettings((current) => ({
-                      ...current,
-                      apiKey: event.target.value
-                    }));
-                  }}
-                  placeholder="输入当前服务商的 API Key"
-                  className="form-field w-full"
-                />
-              </label>
+                <label className="block">
+                  <span className="settings-field-label">
+                    生图 API Key
+                    <span className={imageApiKeyIsSaved ? "text-accent" : "text-tertiary"}>
+                      {imageApiKeyIsSaved ? "已保存" : "未配置"}
+                    </span>
+                  </span>
+                  <div className="relative">
+                    <input
+                      type={isImageApiKeyVisible ? "text" : "password"}
+                      value={draftSettings.imageApiKey}
+                      onChange={(event) => updateImageConnectionDraft({ imageApiKey: event.target.value })}
+                      placeholder="输入生图专用 API Key"
+                      className="form-field settings-control pr-[76px]"
+                    />
+                    <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+                      <button
+                        type="button"
+                        className="settings-field-action"
+                        onClick={() => setIsImageApiKeyVisible((current) => !current)}
+                        aria-label={isImageApiKeyVisible ? "隐藏生图 API Key" : "显示生图 API Key"}
+                      >
+                        {isImageApiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-field-action"
+                        onClick={() => updateImageConnectionDraft({ imageApiKey: "" })}
+                        aria-label="清空生图 API Key"
+                        disabled={!draftSettings.imageApiKey}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </label>
 
-              <label className="block md:col-span-2">
-                <span className="mb-2 block text-sm text-white/70">Base URL</span>
-                <input
-                  type="text"
-                  value={draftSettings.baseUrl}
-                  onChange={(event) => {
-                    setDraftSettings((current) => ({
-                      ...current,
-                      baseUrl: event.target.value
-                    }));
-                  }}
-                  placeholder="输入或覆盖默认 Base URL"
-                  className="form-field w-full"
-                />
-              </label>
+                <label className="block">
+                  <span className="settings-field-label">生图 Base URL</span>
+                  <input
+                    type="url"
+                    value={draftSettings.imageBaseUrl}
+                    onChange={(event) => updateImageConnectionDraft({ imageBaseUrl: event.target.value })}
+                    placeholder="留空则使用通用 Base URL"
+                    className="form-field settings-control"
+                  />
+                </label>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-tertiary">
+                两类 API Key 均保存在当前浏览器扩展的本地存储中，并由扩展后台在对应请求中使用。
+              </p>
+            </div>
 
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">推理模型</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.reasoningModel}
-                    onChange={(event) => {
-                      setDraftSettings((current) => ({
-                        ...current,
-                        reasoningModel: event.target.value
-                      }));
+            <div className="settings-form-section">
+              <div className="settings-section-heading">
+                <h3>模型用途</h3>
+                <p>输入框支持从识别结果中搜索选择，也可以直接填写模型 ID。</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {modelFields.map(({ field, label, placeholder, options }) => (
+                  <ModelCombobox
+                    key={field}
+                    id={field}
+                    label={label}
+                    value={draftSettings[field]}
+                    options={options}
+                    placeholder={placeholder}
+                    onChange={(value) => {
+                      setDraftSettings((current) => ({ ...current, [field]: value }));
                     }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    <option value="" className="bg-slate-950 text-white">
-                      请选择推理模型
-                    </option>
-                    {!effectiveDraftCatalog.reasoning.includes(draftSettings.reasoningModel) &&
-                    draftSettings.reasoningModel ? (
-                      <option value={draftSettings.reasoningModel} className="bg-slate-950 text-white">
-                        {draftSettings.reasoningModel}（当前）
-                      </option>
-                    ) : null}
-                    {effectiveDraftCatalog.reasoning.map((model) => (
-                      <option key={model} value={model} className="bg-slate-950 text-white">
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                </div>
-                <input
-                  type="text"
-                  value={draftSettings.reasoningModel}
-                  onChange={(event) => {
-                    setDraftSettings((current) => ({
-                      ...current,
-                      reasoningModel: event.target.value
-                    }));
-                  }}
-                  placeholder="也可手动输入推理模型 ID"
-                  className="form-field mt-2 w-full py-2.5 text-xs"
-                />
-              </label>
+                  />
+                ))}
+              </div>
+            </div>
 
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">视觉模型</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.visionModel}
-                    onChange={(event) => {
-                      setDraftSettings((current) => ({
-                        ...current,
-                        visionModel: event.target.value
-                      }));
-                    }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    <option value="" className="bg-slate-950 text-white">
-                      请选择视觉模型
-                    </option>
-                    {!effectiveDraftCatalog.vision.includes(draftSettings.visionModel) &&
-                    draftSettings.visionModel ? (
-                      <option value={draftSettings.visionModel} className="bg-slate-950 text-white">
-                        {draftSettings.visionModel}（当前）
-                      </option>
-                    ) : null}
-                    {effectiveDraftCatalog.vision.map((model) => (
-                      <option key={model} value={model} className="bg-slate-950 text-white">
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                </div>
-                <input
-                  type="text"
-                  value={draftSettings.visionModel}
-                  onChange={(event) => {
-                    setDraftSettings((current) => ({
-                      ...current,
-                      visionModel: event.target.value
-                    }));
-                  }}
-                  placeholder="也可手动输入视觉模型 ID"
-                  className="form-field mt-2 w-full py-2.5 text-xs"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">生图模型</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.imageModel}
-                    onChange={(event) => {
-                      setDraftSettings((current) => ({
-                        ...current,
-                        imageModel: event.target.value
-                      }));
-                    }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    <option value="" className="bg-slate-950 text-white">
-                      请选择生图模型
-                    </option>
-                    {!effectiveDraftCatalog.image.includes(draftSettings.imageModel) &&
-                    draftSettings.imageModel ? (
-                      <option value={draftSettings.imageModel} className="bg-slate-950 text-white">
-                        {draftSettings.imageModel}（当前）
-                      </option>
-                    ) : null}
-                    {effectiveDraftCatalog.image.map((model) => (
-                      <option key={model} value={model} className="bg-slate-950 text-white">
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                </div>
-                <input
-                  type="text"
-                  value={draftSettings.imageModel}
-                  onChange={(event) => {
-                    setDraftSettings((current) => ({
-                      ...current,
-                      imageModel: event.target.value
-                    }));
-                  }}
-                  placeholder="也可手动输入生图模型 ID"
-                  className="form-field mt-2 w-full py-2.5 text-xs"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">图像比例</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.imageAspectRatio}
-                    onChange={(event) => {
-                      setDraftSettings((current) => ({
+            <div className="settings-form-section">
+              <div className="settings-section-heading">
+                <h3>图像输出</h3>
+                <p>作为图像工坊的默认生成参数。</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <label className="block">
+                  <span className="settings-field-label">图像比例</span>
+                  <div className="relative">
+                    <select
+                      value={draftSettings.imageAspectRatio}
+                      onChange={(event) => setDraftSettings((current) => ({
                         ...current,
                         imageAspectRatio: event.target.value as ExtensionSettings["imageAspectRatio"]
-                      }));
-                    }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    {IMAGE_ASPECT_RATIOS.map((ratio) => (
-                      <option key={ratio} value={ratio} className="bg-slate-950 text-white">
-                        {ratio}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                </div>
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">分辨率</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.imageResolution}
-                    onChange={(event) => {
-                      setDraftSettings((current) => ({
+                      }))}
+                      className="form-field settings-control appearance-none pr-10"
+                    >
+                      {IMAGE_ASPECT_RATIOS.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tertiary" />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="settings-field-label">分辨率</span>
+                  <div className="relative">
+                    <select
+                      value={draftSettings.imageResolution}
+                      onChange={(event) => setDraftSettings((current) => ({
                         ...current,
                         imageResolution: event.target.value as ExtensionSettings["imageResolution"]
-                      }));
-                    }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    {IMAGE_RESOLUTIONS.map((resolution) => (
-                      <option key={resolution} value={resolution} className="bg-slate-950 text-white">
-                        {resolution}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                </div>
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-sm text-white/70">生成数量</span>
-                <div className="relative">
-                  <select
-                    value={draftSettings.imageCount}
-                    onChange={(event) => {
-                      setDraftSettings((current) => ({
+                      }))}
+                      className="form-field settings-control appearance-none pr-10"
+                    >
+                      {IMAGE_RESOLUTIONS.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tertiary" />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="settings-field-label">生成数量</span>
+                  <div className="relative">
+                    <select
+                      value={draftSettings.imageCount}
+                      onChange={(event) => setDraftSettings((current) => ({
                         ...current,
                         imageCount: Number(event.target.value) as ExtensionSettings["imageCount"]
-                      }));
-                    }}
-                    className="form-field w-full cursor-pointer appearance-none py-3 pl-4 pr-10"
-                  >
-                    {IMAGE_COUNTS.map((count) => (
-                      <option key={count} value={count} className="bg-slate-950 text-white">
-                        {count} 张
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                </div>
-              </label>
+                      }))}
+                      className="form-field settings-control appearance-none pr-10"
+                    >
+                      {IMAGE_COUNTS.map((count) => <option key={count} value={count}>{count} 张</option>)}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tertiary" />
+                  </div>
+                </label>
+              </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap gap-3">
+            <ExampleImageStorageSettings />
+
+            <div className="settings-actions">
               <button
                 type="button"
-                onClick={() => {
-                  void handleSave();
-                }}
-                className="gradient-button disabled:opacity-50"
+                onClick={() => void handleSave()}
+                className="gradient-button min-w-[112px]"
                 disabled={!isDirty}
               >
                 保存配置
               </button>
               <button
                 type="button"
-                onClick={handleReset}
-                className="ghost-button disabled:opacity-50"
-                disabled={!isDirty}
-              >
-                恢复已保存
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleTestConnection();
-                }}
-                className="gradient-button disabled:opacity-45"
+                onClick={() => void handleTestConnection()}
+                className="ghost-button min-w-[112px]"
                 disabled={isTestingConnection || !hasDraftConnectionCredentials}
               >
-                {isTestingConnection ? "测试中..." : "测试连接"}
+                {isTestingConnection ? "测试中…" : "测试连接"}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  void handleDetectModels();
-                }}
-                className="ghost-button disabled:opacity-45"
+                onClick={() => void handleDetectModels()}
+                className="settings-text-button min-w-[112px]"
                 disabled={isDetectingModels || !hasDraftConnectionCredentials}
               >
-                {isDetectingModels ? "识别中..." : "自动识别模型"}
+                {isDetectingModels ? "识别中…" : "自动识别模型"}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  void setConnectionStatus("error");
-                  setPanelMessage("已将已保存配置标记为测试失败，悬浮窗状态会同步熄灭。");
-                }}
-                className="ghost-button"
+                onClick={handleReset}
+                className="settings-text-button min-w-[112px]"
+                disabled={!isDirty}
               >
-                标记为测试失败
+                恢复上次保存
               </button>
             </div>
 
-            <div className="mt-5 rounded-3xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-6 text-white/58">
-              {panelMessage}
-            </div>
-            {draftProviderPreset.notes ? (
-              <p className="mt-4 text-sm leading-6 text-white/50">{draftProviderPreset.notes}</p>
-            ) : null}
+            {panelMessage ? <p className="settings-inline-message">{panelMessage}</p> : null}
+            {draftProviderPreset.notes ? <p className="mt-3 text-xs leading-5 text-tertiary">{draftProviderPreset.notes}</p> : null}
             {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
           </article>
 
-          <aside className="space-y-6">
-            <article className="glass-card p-6">
+          <aside className="min-w-0 self-start space-y-4 lg:sticky lg:top-24">
+            <article className="glass-card p-5 md:p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-900">
-                  <DatabaseZap className="h-5 w-5" />
-                </div>
+                <div className="settings-status-icon"><DatabaseZap className="h-5 w-5" /></div>
                 <div>
-                  <h3 className="text-lg font-medium text-white">状态快照</h3>
-                  <p className="text-sm text-white/50">来自 chrome.storage.local 的实时数据</p>
+                  <h2 className="text-[18px] font-semibold">状态快照</h2>
+                  <p className="mt-1 text-xs text-tertiary">当前设备中的实时配置状态</p>
                 </div>
               </div>
 
-              <div className="mt-5 space-y-3 text-sm text-white/65">
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  当前服务商：<span className="text-white">{providerPreset.label}</span>
+              <dl className="settings-status-list mt-5">
+                <div>
+                  <dt>当前服务商</dt>
+                  <dd>{draftProviderPreset.label}</dd>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  Base URL 已验证：
-                  <span className={isServiceReady ? "text-accent" : "text-amber-300"}>
-                    {isServiceReady ? " 是" : " 否"}
-                  </span>
+                <div>
+                  <dt>配置状态</dt>
+                  <dd className={isDraftConfigured ? "text-accent" : "text-primary"}>
+                    {isDraftConfigured ? "已填写完整" : "未填写完整"}
+                  </dd>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  配置完整度：
-                  <span className={isDraftConfigured ? "text-accent" : "text-white"}>
-                    {isDraftConfigured ? " 已满足基础字段" : " 仍缺少必要字段"}
-                  </span>
+                <div>
+                  <dt>连接状态</dt>
+                  <dd className={connectionToneClass}>{connectionStatusLabel}</dd>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  已识别模型：
-                  <span className={draftSettings.lastModelDetectionAt ? "text-accent" : "text-white"}>
-                    {draftSettings.lastModelDetectionAt
-                      ? ` 推理 ${effectiveDraftCatalog.reasoning.length} / 视觉 ${effectiveDraftCatalog.vision.length} / 生图 ${effectiveDraftCatalog.image.length}`
-                      : " 尚未识别"}
-                  </span>
+                <div>
+                  <dt>最近测试</dt>
+                  <dd>{formatTestTime(displayedLastTestAt)}</dd>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  最近验证：
-                  <span className={settings.lastValidatedAt ? "text-accent" : "text-white"}>
-                    {settings.lastValidatedAt
-                      ? ` ${new Date(settings.lastValidatedAt).toLocaleString("zh-CN")}`
-                      : " 尚未验证"}
-                  </span>
+                <div>
+                  <dt>已识别模型</dt>
+                  <dd>{modelRecognitionLabel}</dd>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  草稿变更：
-                  <span className={isDirty ? "text-amber-300" : "text-accent"}>
-                    {isDirty ? " 尚未保存" : " 已与本地存储同步"}
-                  </span>
+                <div>
+                  <dt>生图 Key</dt>
+                  <dd className={draftSettings.imageApiKey.trim() ? "text-accent" : "text-secondary"}>
+                    {draftSettings.imageApiKey.trim() ? "已配置" : "未配置"}
+                  </dd>
                 </div>
-              </div>
+                <div>
+                  <dt>生图通道</dt>
+                  <dd>{imageConnection.channel === "dedicated" ? "专用" : "回退通用"}</dd>
+                </div>
+              </dl>
             </article>
 
-            <article className="glass-card p-6">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-panel-900">
-                  <CheckCircle2 className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-medium text-white">配置说明</h3>
-                  <p className="text-sm text-white/50">按你的业务流程进行模型与连接配置</p>
-                </div>
+            <article className="glass-card settings-side-card">
+              <div className="settings-side-card-heading">
+                <BrainCircuit className="h-4 w-4" />
+                <h2>模型能力</h2>
               </div>
+              <dl className="settings-capability-list">
+                <div><dt>文本模型</dt><dd>{draftSettings.reasoningModel || "未设置"}</dd></div>
+                <div><dt>视觉模型</dt><dd>{draftSettings.visionModel || "未设置"}</dd></div>
+                <div><dt>图像模型</dt><dd>{draftSettings.imageModel || "未设置"}</dd></div>
+                <div><dt>生图地址</dt><dd>{draftSettings.imageBaseUrl.trim() ? "专用地址" : "通用地址"}</dd></div>
+              </dl>
+            </article>
 
-              <div className="mt-5 space-y-3 text-sm leading-6 text-white/60">
-                <p>切换服务商后会自动带出预设模型，并在有 API Key 和 Base URL 时自动识别可用模型列表。</p>
-                <p>推理、视觉、生图模型分栏展示，既可下拉选择，也可手动填写模型 ID。</p>
-                <div className="mt-4 space-y-2 text-white/55">
-                  <p>1. 选择服务商 → 填入 API Key 和 Base URL → 点击「测试连接」验证连通性。</p>
-                  <p>2. 点击「自动识别模型」拉取当前端点支持的模型列表，自动填入下拉选项。</p>
-                  <p>3. 分别选定推理模型、视觉模型、生图模型（无生图模型可留空）。</p>
-                  <p>4. 设置图像比例、分辨率和生成数量，点击「保存配置」同步到悬浮窗。</p>
-                  <p>5. 打开任意网页，悬浮窗中即可使用角色设定扩写、提示词优化与图像生成。</p>
-                </div>
+            <article className="glass-card settings-side-card">
+              <div className="settings-side-card-heading">
+                <Activity className="h-4 w-4" />
+                <h2>最近活动</h2>
               </div>
+              {displayedLastTestAt ? (
+                <div className="settings-activity-item">
+                  <time>{formatTestTime(displayedLastTestAt)}</time>
+                  <span className={connectionToneClass}>{connectionStatusLabel}</span>
+                </div>
+              ) : (
+                <p className="settings-side-empty">完成连接测试后，这里会显示最近结果。</p>
+              )}
             </article>
           </aside>
         </section>
       </motion.div>
+
+      <AnimatePresence>
+        {toastMessage ? (
+          <motion.div
+            initial={{ opacity: 0, x: "-50%", y: -8 }}
+            animate={{ opacity: 1, x: "-50%", y: 0 }}
+            exit={{ opacity: 0, x: "-50%", y: -8 }}
+            transition={{ duration: shouldReduceMotion ? 0.06 : MOTION.toastEnterMs / 1000, ease: MOTION.easeOut }}
+            className="settings-toast"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {toastMessage}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </main>
   );
 }

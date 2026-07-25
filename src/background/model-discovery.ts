@@ -31,14 +31,12 @@ function sortCatalog(catalog: ModelCatalog): ModelCatalog {
 function detectCategoriesFromId(id: string) {
   const normalized = id.toLowerCase();
   const imageKeywords = ["image", "imagen", "seedream", "wanx", "flux", "sd", "sdxl", "dall-e", "recraft", "paint"];
-  const visionKeywords = ["vision", "vl", "omni", "gpt-4o", "gpt-4.1", "qvq", "gemini", "minicpm-v", "hunyuan-vision", "see"];
   const reasoningKeywords = ["reason", "thinking", "r1", "o1", "o3", "o4", "gpt", "claude", "gemini", "qwen", "deepseek", "doubao", "kimi", "hunyuan", "minimax", "chat"];
 
   const isImage = imageKeywords.some((keyword) => normalized.includes(keyword));
-  const isVision = visionKeywords.some((keyword) => normalized.includes(keyword)) || isImage;
   const isReasoning = reasoningKeywords.some((keyword) => normalized.includes(keyword)) || !isImage;
 
-  return { isReasoning, isVision, isImage };
+  return { isReasoning, isImage };
 }
 
 function buildCatalogFromIds(ids: string[]) {
@@ -53,9 +51,6 @@ function buildCatalogFromIds(ids: string[]) {
 
     if (categories.isReasoning) {
       catalog.reasoning.push(id);
-    }
-
-    if (categories.isVision) {
       catalog.vision.push(id);
     }
 

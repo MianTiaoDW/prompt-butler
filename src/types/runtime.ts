@@ -4,7 +4,7 @@ import type {
   PromptGenerationResult,
   PromptOptimizationResult
 } from "./prompt";
-import type { ImageGenerationInput, ImageGenerationResult } from "./image";
+import type { ExampleImageSource, ImageGenerationInput, ImageGenerationResult } from "./image";
 
 export interface ConnectionTestSuccess {
   ok: true;
@@ -66,6 +66,7 @@ export interface OptimizePromptMessage {
   payload: {
     settings: ExtensionSettings;
     content: string;
+    direction?: string;
   };
 }
 
@@ -99,6 +100,48 @@ export interface CancelImageGenerationMessage {
   type: "image:cancel";
 }
 
+export interface PrepareExampleImageMessage {
+  type: "example-image:prepare";
+  payload: { url: string };
+}
+
+export interface PutExampleImageMessage {
+  type: "example-image:put";
+  payload: {
+    promptId: string;
+    dataUrl: string;
+    width: number;
+    height: number;
+    source: ExampleImageSource;
+    sortOrder: number;
+    replaceImageId?: string;
+  };
+}
+
+export interface GetExampleImageMessage {
+  type: "example-image:get";
+  payload: { imageId: string };
+}
+
+export interface DeleteExampleImageMessage {
+  type: "example-image:delete";
+  payload: { imageId: string };
+}
+
+export interface DeletePromptExampleImagesMessage {
+  type: "example-image:delete-prompt";
+  payload: { promptId: string };
+}
+
+export interface ExampleImageUsageMessage {
+  type: "example-image:usage";
+}
+
+export interface CleanupExampleImagesMessage {
+  type: "example-image:cleanup";
+  payload: { validPromptIds: string[] };
+}
+
 export type RuntimeRequestMessage =
   | TestProviderConnectionMessage
   | DetectProviderModelsMessage
@@ -107,7 +150,14 @@ export type RuntimeRequestMessage =
   | GenerateImagesMessage
   | DownloadImagesMessage
   | OpenOptionsPageMessage
-  | CancelImageGenerationMessage;
+  | CancelImageGenerationMessage
+  | PrepareExampleImageMessage
+  | PutExampleImageMessage
+  | GetExampleImageMessage
+  | DeleteExampleImageMessage
+  | DeletePromptExampleImagesMessage
+  | ExampleImageUsageMessage
+  | CleanupExampleImagesMessage;
 
 export type RuntimeResponseMessage =
   | ConnectionTestResult

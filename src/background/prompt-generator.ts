@@ -1,4 +1,5 @@
 import type { ExtensionSettings } from "../types/settings";
+import { getPromptSkillProfile } from "../lib/prompt-skills";
 import type {
   PromptGenerationInput,
   PromptGenerationOutput,
@@ -30,9 +31,13 @@ function parseDataUrl(dataUrl: string) {
   };
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(input: PromptGenerationInput) {
+  const skill = getPromptSkillProfile(input.skillId);
+
   return [
     "你是一个高级提示词导演，专门把角色设定与用户需求扩写成高质量图像提示词。",
+    `本次使用的专业工作流：${skill.name}。`,
+    skill.systemDirective,
     "你必须只返回 JSON，不要输出 Markdown、解释或额外前后缀。",
     "所有字段内容必须使用中文，包括 structuredPrompt 内所有子字段。",
     "JSON 结构必须如下：",
@@ -60,10 +65,10 @@ function buildUserPrompt(input: PromptGenerationInput) {
   return [
     "请基于以下内容生成提示词。",
     "",
-    "【角色设定】",
+    "【专家身份】",
     input.rolePreset.trim(),
     "",
-    "【用户需求】",
+    "【创作任务】",
     input.userRequirement.trim(),
     "",
     imageNote,
@@ -80,9 +85,10 @@ function buildOptimizationSystemPrompt() {
   ].join("\n");
 }
 
-function buildOptimizationUserPrompt(content: string) {
+function buildOptimizationUserPrompt(content: string, direction?: string) {
   return [
     "请优化下面这段提示词，使它更具画面张力、结构更清晰、细节更可执行：",
+    direction ? `本次优化方向：${direction}。请严格围绕这个方向调整，但保留原始主题。` : "",
     "",
     content.trim()
   ].join("\n");
@@ -456,7 +462,7 @@ async function executeGeneration(settings: ExtensionSettings, input: PromptGener
   const hasImages = (input.referenceImages?.length ?? 0) > 0;
   const model = hasImages ? settings.visionModel : settings.reasoningModel;
   const options = {
-    systemPrompt: buildSystemPrompt(),
+    systemPrompt: buildSystemPrompt(input),
     userPrompt: buildUserPrompt(input),
     model,
     referenceImages: input.referenceImages
@@ -513,10 +519,10 @@ export async function generatePromptFromProvider(
   }
 }
 
-async function executeOptimization(settings: ExtensionSettings, content: string) {
+async function executeOptimization(settings: ExtensionSettings, content: string, direction?: string) {
   const options = {
     systemPrompt: buildOptimizationSystemPrompt(),
-    userPrompt: buildOptimizationUserPrompt(content),
+    userPrompt: buildOptimizationUserPrompt(content, direction),
     model: settings.reasoningModel,
     referenceImageDataUrl: null
   };
@@ -534,7 +540,8 @@ async function executeOptimization(settings: ExtensionSettings, content: string)
 
 export async function optimizePromptWithProvider(
   settings: ExtensionSettings,
-  content: string
+  content: string,
+  direction?: string
 ): Promise<PromptOptimizationResult> {
   const optimizedAt = new Date().toISOString();
 
@@ -549,7 +556,7 @@ export async function optimizePromptWithProvider(
   }
 
   try {
-    const { model, rawText } = await executeOptimization(settings, content);
+    const { model, rawText } = await executeOptimization(settings, content, direction);
 
     return {
       ok: true,

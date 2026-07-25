@@ -1,5 +1,7 @@
 # 开发需求文档
 
+> **文档状态：历史初始需求。** 本文件保留项目起点，不再代表全部当前实现或最新视觉决策。继续开发时以实际代码、`AGENTS.md` 和 [`docs/CODEX_HANDOFF.md`](docs/CODEX_HANDOFF.md) 为准；若三者冲突，先核实现状并报告，不得用本文件回退已完成能力。
+
 ## 角色
 你是一位拥有10年经验的资深前端架构师和全栈工程师，精通 Chrome/Edge 浏览器插件开发（Manifest V3），精通 React 18、TypeScript、Tailwind CSS 以及各类大模型 API 接入。
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   buildSettingsFromProvider,
@@ -24,7 +24,11 @@ export function useExtensionSettings() {
   );
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
-  const { value: settings, setValue, isLoading, error } = storage;
+  const { value: storedSettings, setValue, isLoading, error } = storage;
+  const settings = useMemo<ExtensionSettings>(() => ({
+    ...defaultExtensionSettings,
+    ...storedSettings
+  }), [storedSettings]);
   const providerPreset = getProviderPreset(settings.provider);
   const isConfigured = isSettingsConfigured(settings);
   const isServiceReady = isConfigured;
@@ -43,6 +47,7 @@ export function useExtensionSettings() {
 
   const updatePartialSettings = async (patch: Partial<ExtensionSettings>) => {
     await setValue((current) => ({
+      ...defaultExtensionSettings,
       ...current,
       ...patch
     }));

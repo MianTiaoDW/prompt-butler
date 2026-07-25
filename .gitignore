@@ -1,9 +1,16 @@
 node_modules/
 dist/
 .claude/
+.firecrawl/
+.playwright-cli/
+design-lab/*/output/build/
 .DS_Store
+*.log
+*.pid
 *.local
 .env
 .env.*
 *.docx
 *.zip
+native/**/bin/
+native/**/obj/
